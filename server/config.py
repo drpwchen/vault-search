@@ -1,4 +1,7 @@
 """
+vault-search — local-first semantic search for Obsidian.
+Author: P.W. Chen · https://drpwchen.com · https://github.com/drpwchen
+
 Central configuration for vault-search.
 
 Every path, model name, and tunable is resolved here from environment variables,

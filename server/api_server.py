@@ -671,7 +671,7 @@ def health():
     try:
         table = get_table()
         count = table.count_rows()
-        return {"status": "ok", "chunks": count, "version": "3.0"}
+        return {"status": "ok", "chunks": count, "version": "3.0", "author": "P.W. Chen / drpwchen.com"}
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
 

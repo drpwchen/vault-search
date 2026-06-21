@@ -7,5 +7,6 @@
   "useActiveNote": false,
   "excludeFolders": ".obsidian, .trash",
   "contextNResults": 10,
-  "chatHistoryFolder": "VaultChatHistory"
+  "chatHistoryFolder": "VaultChatHistory",
+  "language": "en"
 }

@@ -13,7 +13,169 @@ const DEFAULT_SETTINGS = {
   excludeFolders: ".obsidian, .trash",
   contextNResults: 10,
   chatHistoryFolder: "VaultChatHistory",
+  language: "en",
 };
+
+// ============================================================================
+// i18n — UI strings. Default English; switchable in settings (en / zh-TW).
+// Authored by P.W. Chen · https://drpwchen.com
+// ============================================================================
+let CURRENT_LANG = "en";
+
+const I18N = {
+  en: {
+    searchPlaceholder: "Search vault…",
+    searchBtn: "Search",
+    searchHint: "Enter a query to start semantic search",
+    searching: "Searching…",
+    noRelated: "No related notes found",
+    searchServerErr: "Cannot reach the search server — make sure api_server.py is running",
+    error: (msg) => `Error: ${msg}`,
+    groupPrimary: (n) => `Primary matches (${n})`,
+    groupSecondary: (n) => `Other matches (${n})`,
+    noThreshold: "No results with similarity ≥ 0.50",
+    fileNotFound: "File not found",
+    pauseTitle: "Pause auto-update",
+    resumeTitle: "Resume auto-update",
+    refreshTitle: "Re-query",
+    reindexTitle: "Re-index current note",
+    searchLabel: (q) => `Search: “${q}”`,
+    relatedLabel: (n) => `Related: ${n}`,
+    cannotConnect: "Cannot connect",
+    notIndexed: "Note not indexed — press 🔄 to index",
+    indexing: (name) => `Indexing: ${name}…`,
+    indexed: (note, chunks) => `Indexed: ${note} (${chunks} chunks)`,
+    indexFailed: (e) => `Index failed: ${e}`,
+    previewTitle: "👁 Context preview",
+    activePage: (type) => `📄 Active page (${type})`,
+    mentionedNotes: (n) => `@ Mentioned notes (${n})`,
+    selectedSearchNotes: (n) => `🔍 Selected search notes (${n})`,
+    noContext: "No attached context",
+    estTokens: (n) => `Estimated tokens: ~${n}`,
+    confirmSend: "Send",
+    cancel: "Cancel",
+    useActivePage: "Use active page",
+    previewContext: "Preview context",
+    clearChat: "Clear conversation",
+    chatCleared: "Conversation cleared. New conversation started.",
+    saveChat: "Save conversation",
+    noActiveFile: "(no file open)",
+    chatInputPlaceholder: "Message… (@ to mention notes)",
+    chooseRefNotes: "Choose reference notes",
+    send: "Send",
+    enterQuestionFirst: "Enter a question first, then click ‘Choose reference notes’",
+    pickerHeader: "Tick notes to cite:",
+    searchFailed: "Search failed",
+    hintVault: "📚 Vault mode — answer only from vault notes; @ to add notes to context",
+    hintFree: "💬 Free mode — open chat + PubMed literature search, no vault search",
+    hintHybrid: "🔀 Hybrid mode — auto-search vault, supplement with AI knowledge when needed",
+    copyReply: "Copy reply",
+    suggestAdd: "Suggested:",
+    refsLabel: (n, arrow) => `References (${n}) ${arrow}`,
+    thinking: "Thinking… ",
+    stop: "⏹ Stop",
+    stopped: "Response stopped",
+    serverConnErr: "Cannot reach server — make sure api_server.py is running",
+    nothingToSave: "No conversation to save",
+    savedTo: (path) => `Conversation saved to ${path}`,
+    setApiUrlDesc: "Address of the vault-search API server (local: http://localhost:3789)",
+    setApiKeyDesc: "API server auth key (optional)",
+    setNResults: "Search result count",
+    setNResultsDesc: "Max results per search",
+    setUseCtx: "Chat: use vault context",
+    setUseCtxDesc: "Auto-search related notes as answer context (RAG)",
+    setDefaultMode: "Default chat mode",
+    setDefaultModeDesc: "Mode the Chat panel opens in",
+    setRelatedN: "Related Notes: result count",
+    setRelatedNDesc: "Max results in the Related Notes panel",
+    setExclude: "Exclude folders",
+    setExcludeDesc: "Folders excluded from @ mentions and search (comma-separated)",
+    setChatFolder: "Chat save folder",
+    setChatFolderDesc: "Folder the Chat save button writes to (relative to vault root)",
+    setLanguage: "Language",
+    setLanguageDesc: "Interface language (reopen panels to apply)",
+  },
+  "zh-TW": {
+    searchPlaceholder: "搜尋 vault...",
+    searchBtn: "搜尋",
+    searchHint: "輸入關鍵字開始語意搜尋",
+    searching: "搜尋中...",
+    noRelated: "找不到相關筆記",
+    searchServerErr: "無法連線到搜尋伺服器 — 請確認 api_server.py 正在執行",
+    error: (msg) => `錯誤：${msg}`,
+    groupPrimary: (n) => `主要相關 (${n})`,
+    groupSecondary: (n) => `其他相關 (${n})`,
+    noThreshold: "找不到 similarity ≥ 0.50 的結果",
+    fileNotFound: "找不到檔案",
+    pauseTitle: "暫停自動更新",
+    resumeTitle: "繼續自動更新",
+    refreshTitle: "重新查詢",
+    reindexTitle: "重新索引當前筆記",
+    searchLabel: (q) => `搜尋：「${q}」`,
+    relatedLabel: (n) => `相關：${n}`,
+    cannotConnect: "無法連線",
+    notIndexed: "筆記尚未索引 — 按 🔄 索引",
+    indexing: (name) => `索引中：${name}...`,
+    indexed: (note, chunks) => `已索引：${note} (${chunks} chunks)`,
+    indexFailed: (e) => `索引失敗：${e}`,
+    previewTitle: "👁 上下文預覽",
+    activePage: (type) => `📄 開啟頁面 (${type})`,
+    mentionedNotes: (n) => `@ 提及筆記 (${n})`,
+    selectedSearchNotes: (n) => `🔍 搜尋選取筆記 (${n})`,
+    noContext: "沒有附加上下文",
+    estTokens: (n) => `預估 tokens: ~${n}`,
+    confirmSend: "確認送出",
+    cancel: "取消",
+    useActivePage: "使用開啟頁面",
+    previewContext: "預覽 context",
+    clearChat: "清除對話",
+    chatCleared: "對話已清除。新對話開始。",
+    saveChat: "儲存對話",
+    noActiveFile: "(無開啟檔案)",
+    chatInputPlaceholder: "訊息... (@ 提及筆記)",
+    chooseRefNotes: "選擇參考筆記",
+    send: "送出",
+    enterQuestionFirst: "請先輸入問題，再點「選擇參考筆記」",
+    pickerHeader: "勾選要引用的筆記：",
+    searchFailed: "搜尋失敗",
+    hintVault: "📚 Vault 模式 — 僅根據 vault 筆記回答，@ 提及筆記加入 context",
+    hintFree: "💬 Free 模式 — 自由對話 + PubMed 文獻搜尋，不搜尋 vault",
+    hintHybrid: "🔀 Hybrid 模式 — 自動搜尋 vault，不足時用 AI 知識補充",
+    copyReply: "複製回覆",
+    suggestAdd: "建議加入：",
+    refsLabel: (n, arrow) => `參考 (${n}) ${arrow}`,
+    thinking: "思考中... ",
+    stop: "⏹ 停止",
+    stopped: "已停止回應",
+    serverConnErr: "無法連線到伺服器 — 請確認 api_server.py 正在執行",
+    nothingToSave: "沒有對話可以儲存",
+    savedTo: (path) => `對話已儲存到 ${path}`,
+    setApiUrlDesc: "vault-search API server 的位址（本機: http://localhost:3789）",
+    setApiKeyDesc: "API 伺服器認證金鑰（可留空）",
+    setNResults: "搜尋結果數量",
+    setNResultsDesc: "每次搜尋回傳的最大結果數",
+    setUseCtx: "Chat：使用 Vault 上下文",
+    setUseCtxDesc: "聊天時自動搜尋相關筆記作為回答參考（RAG）",
+    setDefaultMode: "預設聊天模式",
+    setDefaultModeDesc: "Chat 面板開啟時的預設模式",
+    setRelatedN: "Related Notes：結果數量",
+    setRelatedNDesc: "Related Notes 面板顯示的最大結果數",
+    setExclude: "排除資料夾",
+    setExcludeDesc: "@ 提及和搜尋時排除的資料夾（逗號分隔）",
+    setChatFolder: "對話儲存資料夾",
+    setChatFolderDesc: "Chat 面板「儲存對話」寫入的資料夾（相對於 vault 根目錄）",
+    setLanguage: "語言",
+    setLanguageDesc: "介面語言（重新開啟面板後生效）",
+  },
+};
+
+function t(key, ...args) {
+  const table = I18N[CURRENT_LANG] || I18N.en;
+  let v = table[key];
+  if (v === undefined) v = I18N.en[key];
+  if (v === undefined) return key;
+  return typeof v === "function" ? v(...args) : v;
+}
 
 // --- Folder filter ---
 function isFileAllowed(file, settings) {
@@ -97,12 +259,12 @@ class VaultSearchView extends ItemView {
     const inputRow = container.createDiv({ cls: "vault-search-input-row" });
     this.inputEl = inputRow.createEl("input", {
       cls: "vault-search-input",
-      attr: { type: "text", placeholder: "搜尋 vault..." },
+      attr: { type: "text", placeholder: t("searchPlaceholder") },
     });
-    const btn = inputRow.createEl("button", { cls: "vault-search-btn", text: "搜尋" });
+    const btn = inputRow.createEl("button", { cls: "vault-search-btn", text: t("searchBtn") });
 
     this.resultsEl = container.createDiv({ cls: "vault-search-results" });
-    this.showStatus("輸入關鍵字開始語意搜尋");
+    this.showStatus(t("searchHint"));
 
     btn.addEventListener("click", () => this.doSearch());
     this.inputEl.addEventListener("keydown", (e) => {
@@ -121,7 +283,7 @@ class VaultSearchView extends ItemView {
     const query = this.inputEl.value.trim();
     if (!query) return;
 
-    this.showStatus("搜尋中...");
+    this.showStatus(t("searching"));
 
     try {
       const url = `${this.plugin.settings.apiUrl}/api/search?query=${encodeURIComponent(query)}&n_results=${this.plugin.settings.nResults}`;
@@ -129,7 +291,7 @@ class VaultSearchView extends ItemView {
       const data = response.json;
 
       if (!data.results || data.results.length === 0) {
-        this.showStatus("找不到相關筆記");
+        this.showStatus(t("noRelated"));
         return;
       }
 
@@ -137,9 +299,9 @@ class VaultSearchView extends ItemView {
     } catch (e) {
       const msg = e.message || String(e);
       if (msg.includes("ECONNREFUSED") || msg.includes("fetch") || msg.includes("net::")) {
-        this.showStatus("無法連線到搜尋伺服器 — 請確認 api_server.py 正在執行", true);
+        this.showStatus(t("searchServerErr"), true);
       } else {
-        this.showStatus(`錯誤：${msg}`, true);
+        this.showStatus(t("error", msg), true);
       }
     }
   }
@@ -151,17 +313,17 @@ class VaultSearchView extends ItemView {
     const secondary = results.filter((r) => r.similarity >= 0.5 && r.similarity < 0.7);
 
     if (primary.length > 0) {
-      this.resultsEl.createDiv({ cls: "vault-search-group-heading", text: `主要相關 (${primary.length})` });
+      this.resultsEl.createDiv({ cls: "vault-search-group-heading", text: t("groupPrimary", primary.length) });
       primary.forEach((r) => this.renderOneResult(r));
     }
 
     if (secondary.length > 0) {
-      this.resultsEl.createDiv({ cls: "vault-search-group-heading", text: `其他相關 (${secondary.length})` });
+      this.resultsEl.createDiv({ cls: "vault-search-group-heading", text: t("groupSecondary", secondary.length) });
       secondary.forEach((r) => this.renderOneResult(r));
     }
 
     if (primary.length === 0 && secondary.length === 0) {
-      this.showStatus("找不到 similarity ≥ 0.50 的結果");
+      this.showStatus(t("noThreshold"));
     }
   }
 
@@ -214,7 +376,7 @@ class VaultSearchView extends ItemView {
       || this.app.vault.getMarkdownFiles().find((f) => f.basename === r.note);
 
     if (!file) {
-      containerEl.setText("找不到檔案");
+      containerEl.setText(t("fileNotFound"));
       return;
     }
 
@@ -282,20 +444,20 @@ class VaultContextView extends ItemView {
     const toolbar = container.createDiv({ cls: "vault-context-toolbar" });
 
     this.pauseBtn = toolbar.createEl("button", { cls: "vault-context-toolbar-btn", text: "⏸" });
-    this.pauseBtn.title = "暫停自動更新";
+    this.pauseBtn.title = t("pauseTitle");
     this.pauseBtn.addEventListener("click", () => {
       this.isPaused = !this.isPaused;
       this.pauseBtn.setText(this.isPaused ? "▶" : "⏸");
-      this.pauseBtn.title = this.isPaused ? "繼續自動更新" : "暫停自動更新";
+      this.pauseBtn.title = this.isPaused ? t("resumeTitle") : t("pauseTitle");
       this.pauseBtn.toggleClass("is-active", this.isPaused);
     });
 
     const refreshBtn = toolbar.createEl("button", { cls: "vault-context-toolbar-btn", text: "↻" });
-    refreshBtn.title = "重新查詢";
+    refreshBtn.title = t("refreshTitle");
     refreshBtn.addEventListener("click", () => this.fetchAndRender());
 
     this.reindexBtn = toolbar.createEl("button", { cls: "vault-context-toolbar-btn", text: "🔄" });
-    this.reindexBtn.title = "重新索引當前筆記";
+    this.reindexBtn.title = t("reindexTitle");
     this.reindexBtn.addEventListener("click", () => this.reindexCurrentNote());
 
     this.statusEl = toolbar.createSpan({ cls: "vault-context-status" });
@@ -413,12 +575,12 @@ class VaultContextView extends ItemView {
       const queryText = this.currentSelection.slice(0, 500);
       url = `${baseUrl}/api/search?query=${encodeURIComponent(queryText)}&n_results=${nResults}`;
       const display = queryText.slice(0, 40) + (queryText.length > 40 ? "..." : "");
-      statusText = `搜尋：「${display}」`;
+      statusText = t("searchLabel", display);
     } else if (this.currentNoteName) {
       // Try /api/similar first, fall back to /api/search if it fails
       url = `${baseUrl}/api/similar?note_name=${encodeURIComponent(this.currentNoteName)}&n_results=${nResults}`;
       this.similarFallbackQuery = this.currentNoteName;
-      statusText = `相關：${this.currentNoteName}`;
+      statusText = t("relatedLabel", this.currentNoteName);
     } else {
       return;
     }
@@ -449,7 +611,7 @@ class VaultContextView extends ItemView {
       if (!data.results || data.results.length === 0) {
         this.updateStatus(statusText, "done");
         this.resultsEl.empty();
-        this.resultsEl.createDiv({ cls: "vault-search-status", text: "找不到相關筆記" });
+        this.resultsEl.createDiv({ cls: "vault-search-status", text: t("noRelated") });
         return;
       }
 
@@ -475,11 +637,11 @@ class VaultContextView extends ItemView {
         } catch (_) { /* fall through to error display */ }
       }
       if (msg.includes("ECONNREFUSED") || msg.includes("fetch") || msg.includes("net::")) {
-        this.updateStatus("無法連線", "error");
+        this.updateStatus(t("cannotConnect"), "error");
       } else {
         this.updateStatus(statusText, "done");
         this.resultsEl.empty();
-        this.resultsEl.createDiv({ cls: "vault-search-status", text: "筆記尚未索引 — 按 🔄 索引" });
+        this.resultsEl.createDiv({ cls: "vault-search-status", text: t("notIndexed") });
       }
     }
   }
@@ -491,17 +653,17 @@ class VaultContextView extends ItemView {
     const secondary = results.filter((r) => r.similarity >= 0.5 && r.similarity < 0.7);
 
     if (primary.length > 0) {
-      this.resultsEl.createDiv({ cls: "vault-search-group-heading", text: `主要相關 (${primary.length})` });
+      this.resultsEl.createDiv({ cls: "vault-search-group-heading", text: t("groupPrimary", primary.length) });
       primary.forEach((r) => this.renderOneResult(r));
     }
 
     if (secondary.length > 0) {
-      this.resultsEl.createDiv({ cls: "vault-search-group-heading", text: `其他相關 (${secondary.length})` });
+      this.resultsEl.createDiv({ cls: "vault-search-group-heading", text: t("groupSecondary", secondary.length) });
       secondary.forEach((r) => this.renderOneResult(r));
     }
 
     if (primary.length === 0 && secondary.length === 0) {
-      this.resultsEl.createDiv({ cls: "vault-search-status", text: "找不到 similarity ≥ 0.50 的結果" });
+      this.resultsEl.createDiv({ cls: "vault-search-status", text: t("noThreshold") });
     }
   }
 
@@ -538,7 +700,7 @@ class VaultContextView extends ItemView {
           previewLoaded = true;
           const file = this.app.vault.getAbstractFileByPath(r.file)
             || this.app.vault.getMarkdownFiles().find((f) => f.basename === r.note);
-          if (!file) { previewEl.setText("找不到檔案"); return; }
+          if (!file) { previewEl.setText(t("fileNotFound")); return; }
           const content = await this.app.vault.cachedRead(file);
           let excerpt = r.section ? extractSection(content, r.section) : "";
           if (!excerpt) {
@@ -573,7 +735,7 @@ class VaultContextView extends ItemView {
     if (!file) return;
 
     this.reindexBtn.disabled = true;
-    this.updateStatus(`索引中：${file.basename}...`, "loading");
+    this.updateStatus(t("indexing", file.basename), "loading");
 
     try {
       const url = `${this.plugin.settings.apiUrl}/api/reindex`;
@@ -584,11 +746,11 @@ class VaultContextView extends ItemView {
         body: JSON.stringify({ file: file.path }),
       });
       const data = response.json;
-      this.updateStatus(`已索引：${data.note} (${data.chunks} chunks)`, "done");
+      this.updateStatus(t("indexed", data.note, data.chunks), "done");
       // Refresh results after reindex
       setTimeout(() => this.fetchAndRender(), 300);
     } catch (e) {
-      this.updateStatus(`索引失敗：${e.message || e}`, "error");
+      this.updateStatus(t("indexFailed", e.message || e), "error");
     } finally {
       this.reindexBtn.disabled = false;
     }
@@ -606,14 +768,14 @@ class ContextPreviewModal extends Modal {
   onOpen() {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h3", { text: "👁 上下文預覽" });
+    contentEl.createEl("h3", { text: t("previewTitle") });
 
     const { activeNote, mentionedNotes, selectedNotes, estimatedTokens } = this.contextData;
 
     // Active note
     if (activeNote) {
       const section = contentEl.createDiv({ cls: "vault-chat-preview-section" });
-      section.createEl("h4", { text: `📄 開啟頁面 (${activeNote.type})` });
+      section.createEl("h4", { text: t("activePage", activeNote.type) });
       section.createEl("div", { cls: "vault-chat-preview-file", text: activeNote.file });
       const preview = section.createEl("pre", { cls: "vault-chat-preview-content" });
       preview.setText(activeNote.content.slice(0, 500) + (activeNote.content.length > 500 ? "..." : ""));
@@ -622,7 +784,7 @@ class ContextPreviewModal extends Modal {
     // Mentioned notes
     if (mentionedNotes && mentionedNotes.length > 0) {
       const section = contentEl.createDiv({ cls: "vault-chat-preview-section" });
-      section.createEl("h4", { text: `@ 提及筆記 (${mentionedNotes.length})` });
+      section.createEl("h4", { text: t("mentionedNotes", mentionedNotes.length) });
       mentionedNotes.forEach((n) => {
         section.createEl("div", { cls: "vault-chat-preview-file", text: n });
       });
@@ -631,7 +793,7 @@ class ContextPreviewModal extends Modal {
     // Selected search notes
     if (selectedNotes && selectedNotes.length > 0) {
       const section = contentEl.createDiv({ cls: "vault-chat-preview-section" });
-      section.createEl("h4", { text: `🔍 搜尋選取筆記 (${selectedNotes.length})` });
+      section.createEl("h4", { text: t("selectedSearchNotes", selectedNotes.length) });
       selectedNotes.forEach((n) => {
         section.createEl("div", { cls: "vault-chat-preview-file", text: n });
       });
@@ -639,17 +801,17 @@ class ContextPreviewModal extends Modal {
 
     // No context
     if (!activeNote && (!mentionedNotes || mentionedNotes.length === 0) && (!selectedNotes || selectedNotes.length === 0)) {
-      contentEl.createEl("div", { cls: "vault-chat-preview-empty", text: "沒有附加上下文" });
+      contentEl.createEl("div", { cls: "vault-chat-preview-empty", text: t("noContext") });
     }
 
     // Token estimate
     const tokenEl = contentEl.createDiv({ cls: "vault-chat-preview-tokens" });
-    tokenEl.setText(`預估 tokens: ~${Math.round(estimatedTokens).toLocaleString()}`);
+    tokenEl.setText(t("estTokens", Math.round(estimatedTokens).toLocaleString()));
 
     // Buttons
     const btnRow = contentEl.createDiv({ cls: "vault-chat-preview-btns" });
-    const confirmBtn = btnRow.createEl("button", { cls: "mod-cta", text: "確認送出" });
-    const cancelBtn = btnRow.createEl("button", { text: "取消" });
+    const confirmBtn = btnRow.createEl("button", { cls: "mod-cta", text: t("confirmSend") });
+    const cancelBtn = btnRow.createEl("button", { text: t("cancel") });
 
     confirmBtn.addEventListener("click", () => {
       this.confirmed = true;
@@ -763,7 +925,7 @@ class VaultChatView extends ItemView {
     this.activeNoteBtn = contextGroup.createEl("button", {
       cls: "vault-chat-toolbar-icon",
       text: "📄",
-      attr: { title: "使用開啟頁面" },
+      attr: { title: t("useActivePage") },
     });
     this.activeNoteBtn.addEventListener("click", () => {
       this.useActiveNote = !this.useActiveNote;
@@ -782,14 +944,14 @@ class VaultChatView extends ItemView {
     const previewBtnToolbar = contextGroup.createEl("button", {
       cls: "vault-chat-toolbar-icon",
       text: "👁",
-      attr: { title: "預覽 context" },
+      attr: { title: t("previewContext") },
     });
     previewBtnToolbar.addEventListener("click", () => this.showContextPreview());
 
     // Action group: clear + save
     const actionGroup = toolbar.createDiv({ cls: "vault-chat-action-group" });
 
-    const clearBtn = actionGroup.createEl("button", { cls: "vault-chat-toolbar-icon", text: "🗑", attr: { title: "清除對話" } });
+    const clearBtn = actionGroup.createEl("button", { cls: "vault-chat-toolbar-icon", text: "🗑", attr: { title: t("clearChat") } });
     clearBtn.addEventListener("click", () => {
       this.history = [];
       this.totalUsage = { input: 0, output: 0, cost: 0 };
@@ -798,10 +960,10 @@ class VaultChatView extends ItemView {
       this.messagesEl.empty();
       this.updateUsageDisplay();
       this.updateMentionChips();
-      this.addSystemMessage("對話已清除。新對話開始。");
+      this.addSystemMessage(t("chatCleared"));
     });
 
-    const saveBtn = actionGroup.createEl("button", { cls: "vault-chat-toolbar-icon", text: "💾", attr: { title: "儲存對話" } });
+    const saveBtn = actionGroup.createEl("button", { cls: "vault-chat-toolbar-icon", text: "💾", attr: { title: t("saveChat") } });
     saveBtn.addEventListener("click", () => this.saveConversation());
 
     // Usage display removed — was pushing content off-screen on mobile
@@ -832,7 +994,7 @@ class VaultChatView extends ItemView {
     const textareaWrapper = inputRow.createDiv({ cls: "vault-chat-textarea-wrapper" });
     this.chatInput = textareaWrapper.createEl("textarea", {
       cls: "vault-chat-input",
-      attr: { placeholder: "訊息... (@ 提及筆記)", rows: "2" },
+      attr: { placeholder: t("chatInputPlaceholder"), rows: "2" },
     });
 
     // Autocomplete dropdown (P2b)
@@ -842,8 +1004,8 @@ class VaultChatView extends ItemView {
 
     // Icon buttons beside textarea
     const btnCol = inputRow.createDiv({ cls: "vault-chat-btn-col" });
-    const searchCtxBtn = btnCol.createEl("button", { cls: "vault-chat-icon-btn", text: "📎", attr: { title: "選擇參考筆記" } });
-    const sendBtn = btnCol.createEl("button", { cls: "vault-chat-send-icon-btn", text: "➤", attr: { title: "送出" } });
+    const searchCtxBtn = btnCol.createEl("button", { cls: "vault-chat-icon-btn", text: "📎", attr: { title: t("chooseRefNotes") } });
+    const sendBtn = btnCol.createEl("button", { cls: "vault-chat-send-icon-btn", text: "➤", attr: { title: t("send") } });
 
     searchCtxBtn.addEventListener("click", () => this.searchContext());
     sendBtn.addEventListener("click", () => this.sendMessage());
@@ -894,7 +1056,7 @@ class VaultChatView extends ItemView {
     if (file) {
       this.activeNoteInfo.setText(file.basename);
     } else {
-      this.activeNoteInfo.setText("(無開啟檔案)");
+      this.activeNoteInfo.setText(t("noActiveFile"));
     }
   }
 
@@ -1154,13 +1316,13 @@ class VaultChatView extends ItemView {
   async searchContext() {
     const query = this.chatInput.value.trim();
     if (!query) {
-      this.addSystemMessage("請先輸入問題，再點「選擇參考筆記」");
+      this.addSystemMessage(t("enterQuestionFirst"));
       return;
     }
 
     this.contextPickerEl.empty();
     this.contextPickerEl.style.display = "block";
-    this.contextPickerEl.setText("搜尋中...");
+    this.contextPickerEl.setText(t("searching"));
 
     try {
       const url = `${this.plugin.settings.apiUrl}/api/search?query=${encodeURIComponent(query)}&n_results=10`;
@@ -1170,12 +1332,12 @@ class VaultChatView extends ItemView {
       this.contextPickerEl.empty();
 
       if (!data.results || data.results.length === 0) {
-        this.contextPickerEl.setText("找不到相關筆記");
+        this.contextPickerEl.setText(t("noRelated"));
         return;
       }
 
       const header = this.contextPickerEl.createDiv({ cls: "vault-chat-picker-header" });
-      header.createSpan({ text: "勾選要引用的筆記：" });
+      header.createSpan({ text: t("pickerHeader") });
       const closeBtn = header.createSpan({ cls: "vault-chat-picker-close", text: "✕" });
       closeBtn.addEventListener("click", () => {
         this.contextPickerEl.style.display = "none";
@@ -1210,7 +1372,7 @@ class VaultChatView extends ItemView {
           label.createSpan({ cls: "vault-chat-picker-sim", text: ` ${r.similarity.toFixed(2)}` });
         });
     } catch (e) {
-      this.contextPickerEl.setText("搜尋失敗");
+      this.contextPickerEl.setText(t("searchFailed"));
     }
   }
 
@@ -1218,9 +1380,9 @@ class VaultChatView extends ItemView {
 
   showModeHint() {
     const hints = {
-      vault: "📚 Vault 模式 — 僅根據 vault 筆記回答，@ 提及筆記加入 context",
-      free: "💬 Free 模式 — 自由對話 + PubMed 文獻搜尋，不搜尋 vault",
-      hybrid: "🔀 Hybrid 模式 — 自動搜尋 vault，不足時用 AI 知識補充",
+      vault: t("hintVault"),
+      free: t("hintFree"),
+      hybrid: t("hintHybrid"),
     };
     // Remove previous hint if exists
     const prev = this.messagesEl.querySelector(".vault-chat-mode-hint");
@@ -1250,7 +1412,7 @@ class VaultChatView extends ItemView {
 
     // Copy button (P3b)
     const copyBtn = wrapper.createDiv({ cls: "vault-chat-copy-btn", text: "📋" });
-    copyBtn.setAttribute("title", "複製回覆");
+    copyBtn.setAttribute("title", t("copyReply"));
     copyBtn.addEventListener("click", async () => {
       const raw = this.rawMarkdownMap.get(wrapper) || "";
       await navigator.clipboard.writeText(raw);
@@ -1285,7 +1447,7 @@ class VaultChatView extends ItemView {
 
     if (validSuggestions.length > 0) {
       const suggestBar = wrapper.createDiv({ cls: "vault-chat-suggest-bar" });
-      suggestBar.createSpan({ cls: "vault-chat-suggest-label", text: "建議加入：" });
+      suggestBar.createSpan({ cls: "vault-chat-suggest-label", text: t("suggestAdd") });
       validSuggestions.forEach((name) => {
         const chip = suggestBar.createSpan({ cls: "vault-chat-suggest-chip", text: `+ ${name}` });
         chip.addEventListener("click", () => {
@@ -1305,13 +1467,13 @@ class VaultChatView extends ItemView {
 
     if (contextNotes && contextNotes.length > 0) {
       const refEl = footerEl.createDiv({ cls: "vault-chat-refs" });
-      const refToggle = refEl.createSpan({ cls: "vault-chat-refs-toggle", text: `參考 (${contextNotes.length}) ▶` });
+      const refToggle = refEl.createSpan({ cls: "vault-chat-refs-toggle", text: t("refsLabel", contextNotes.length, "▶") });
       const refChips = refEl.createDiv({ cls: "vault-chat-refs-chips" });
       refChips.style.display = "none";
       refToggle.addEventListener("click", () => {
         const open = refChips.style.display !== "none";
         refChips.style.display = open ? "none" : "flex";
-        refToggle.setText(`參考 (${contextNotes.length}) ${open ? "▶" : "▼"}`);
+        refToggle.setText(t("refsLabel", contextNotes.length, open ? "▶" : "▼"));
       });
       contextNotes.forEach((noteName) => {
         const chip = refChips.createSpan({ cls: "vault-chat-ref-chip", text: noteName });
@@ -1337,8 +1499,8 @@ class VaultChatView extends ItemView {
 
   addLoadingIndicator() {
     const el = this.messagesEl.createDiv({ cls: "vault-chat-msg vault-chat-assistant vault-chat-loading" });
-    el.createSpan({ text: "思考中... " });
-    const stopBtn = el.createEl("button", { cls: "vault-chat-stop-btn", text: "⏹ 停止" });
+    el.createSpan({ text: t("thinking") });
+    const stopBtn = el.createEl("button", { cls: "vault-chat-stop-btn", text: t("stop") });
     stopBtn.addEventListener("click", () => {
       if (this.abortController) {
         this.abortController.abort();
@@ -1466,7 +1628,7 @@ class VaultChatView extends ItemView {
       }
       if (submitData.error) {
         loadingEl.remove();
-        this.addSystemMessage(`錯誤：${submitData.error}`);
+        this.addSystemMessage(t("error", submitData.error));
         return;
       }
 
@@ -1513,7 +1675,7 @@ class VaultChatView extends ItemView {
       loadingEl.remove();
 
       if (pollResult.status === "error") {
-        this.addSystemMessage(`錯誤：${pollResult.error}`);
+        this.addSystemMessage(t("error", pollResult.error));
       } else {
         this.history.push({ role: "user", content: text });
         this.history.push({ role: "assistant", content: pollResult.reply });
@@ -1538,13 +1700,13 @@ class VaultChatView extends ItemView {
       loadingEl.remove();
       console.error("[vault-chat] sendMessage error:", e, "name:", e.name, "message:", e.message, "status:", e.status);
       if (e.name === "AbortError" || (this.abortController && this.abortController.signal.aborted)) {
-        this.addSystemMessage("已停止回應");
+        this.addSystemMessage(t("stopped"));
       } else {
         const msg = e.message || String(e);
         if (msg.includes("ECONNREFUSED") || msg.includes("net::") || msg.includes("fetch") || msg.includes("Failed to fetch") || msg.includes("NetworkError")) {
-          this.addSystemMessage("無法連線到伺服器 — 請確認 api_server.py 正在執行");
+          this.addSystemMessage(t("serverConnErr"));
         } else {
-          this.addSystemMessage(`錯誤：${msg}`);
+          this.addSystemMessage(t("error", msg));
         }
       }
     } finally {
@@ -1557,7 +1719,7 @@ class VaultChatView extends ItemView {
 
   async saveConversation() {
     if (this.history.length === 0) {
-      this.addSystemMessage("沒有對話可以儲存");
+      this.addSystemMessage(t("nothingToSave"));
       return;
     }
 
@@ -1625,7 +1787,7 @@ class VaultChatView extends ItemView {
       await this.app.vault.create(filePath, content);
     }
 
-    this.addSystemMessage(`對話已儲存到 ${filePath}`);
+    this.addSystemMessage(t("savedTo", filePath));
   }
 }
 
@@ -1641,8 +1803,23 @@ class VaultSearchSettingTab extends PluginSettingTab {
     containerEl.empty();
 
     new Setting(containerEl)
+      .setName(t("setLanguage"))
+      .setDesc(t("setLanguageDesc"))
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("en", "English")
+          .addOption("zh-TW", "繁體中文")
+          .setValue(this.plugin.settings.language)
+          .onChange(async (value) => {
+            this.plugin.settings.language = value;
+            await this.plugin.saveSettings();
+            this.display();  // re-render settings in the new language
+          })
+      );
+
+    new Setting(containerEl)
       .setName("API Server URL")
-      .setDesc("vault-search API server 的位址（本機: http://localhost:3789）")
+      .setDesc(t("setApiUrlDesc"))
       .addText((text) =>
         text
           .setPlaceholder("http://localhost:3789")
@@ -1655,7 +1832,7 @@ class VaultSearchSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("API Key")
-      .setDesc("API 伺服器認證金鑰（可留空）")
+      .setDesc(t("setApiKeyDesc"))
       .addText((text) => {
         text.inputEl.type = "password";
         text
@@ -1668,8 +1845,8 @@ class VaultSearchSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("搜尋結果數量")
-      .setDesc("每次搜尋回傳的最大結果數")
+      .setName(t("setNResults"))
+      .setDesc(t("setNResultsDesc"))
       .addSlider((slider) =>
         slider
           .setLimits(5, 30, 5)
@@ -1682,8 +1859,8 @@ class VaultSearchSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Chat：使用 Vault 上下文")
-      .setDesc("聊天時自動搜尋相關筆記作為回答參考（RAG）")
+      .setName(t("setUseCtx"))
+      .setDesc(t("setUseCtxDesc"))
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.useVaultContext)
@@ -1694,8 +1871,8 @@ class VaultSearchSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("預設聊天模式")
-      .setDesc("Chat 面板開啟時的預設模式")
+      .setName(t("setDefaultMode"))
+      .setDesc(t("setDefaultModeDesc"))
       .addDropdown((dropdown) =>
         dropdown
           .addOption("vault", "📚 Vault — notes only")
@@ -1709,8 +1886,8 @@ class VaultSearchSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Related Notes：結果數量")
-      .setDesc("Related Notes 面板顯示的最大結果數")
+      .setName(t("setRelatedN"))
+      .setDesc(t("setRelatedNDesc"))
       .addSlider((slider) =>
         slider
           .setLimits(5, 20, 5)
@@ -1723,8 +1900,8 @@ class VaultSearchSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("排除資料夾")
-      .setDesc("@ 提及和搜尋時排除的資料夾（逗號分隔）")
+      .setName(t("setExclude"))
+      .setDesc(t("setExcludeDesc"))
       .addText((text) =>
         text
           .setPlaceholder(".obsidian, .trash")
@@ -1736,8 +1913,8 @@ class VaultSearchSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("對話儲存資料夾")
-      .setDesc("Chat 面板「💾 儲存對話」寫入的資料夾（相對於 vault 根目錄）")
+      .setName(t("setChatFolder"))
+      .setDesc(t("setChatFolderDesc"))
       .addText((text) =>
         text
           .setPlaceholder("VaultChatHistory")
@@ -1754,6 +1931,13 @@ class VaultSearchSettingTab extends PluginSettingTab {
 class VaultSearchPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
+
+    // — Vault Semantic Search — crafted by P.W. Chen (drpwchen.com) —
+    console.log(
+      "%c🔍 Vault Semantic Search%c  by P.W. Chen · https://drpwchen.com · github.com/drpwchen/obsidian-vault-search",
+      "font-weight:bold;color:#2dd4bf",
+      "color:inherit"
+    );
 
     this.registerView(SEARCH_VIEW_TYPE, (leaf) => new VaultSearchView(leaf, this));
     this.registerView(CHAT_VIEW_TYPE, (leaf) => new VaultChatView(leaf, this));
@@ -1805,9 +1989,11 @@ class VaultSearchPlugin extends Plugin {
 
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    CURRENT_LANG = this.settings.language || "en";
   }
 
   async saveSettings() {
+    CURRENT_LANG = this.settings.language || "en";
     await this.saveData(this.settings);
   }
 }

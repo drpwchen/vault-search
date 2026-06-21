@@ -784,6 +784,7 @@ def main():
                     "serverInfo": {
                         "name": "vault-search",
                         "version": "3.0.0",
+                        "author": "P.W. Chen (drpwchen.com)",
                     },
                 },
             }

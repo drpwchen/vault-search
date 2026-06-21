@@ -95,7 +95,7 @@ ollama pull gemma2:9b
 ### 1. Server
 
 ```bash
-git clone https://github.com/<you>/obsidian-vault-search.git
+git clone https://github.com/drpwchen/obsidian-vault-search.git
 cd obsidian-vault-search
 pip install -r requirements.txt
 
@@ -217,6 +217,11 @@ examples/    source_boost.example.json
 docs/images/ 截圖
 env.example  複製成 .env
 ```
+
+## 作者
+
+由 **陳醫師（Dr. P.W. Chen）** 打造——一個只是想在自己幾千則筆記裡找得到東西的復健科醫師。
+🌐 [drpwchen.com](https://drpwchen.com) · 🐙 [github.com/drpwchen](https://github.com/drpwchen)
 
 ## 授權
 
