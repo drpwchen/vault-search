@@ -1,0 +1,11 @@
+{
+  "apiUrl": "http://localhost:3789",
+  "nResults": 20,
+  "useVaultContext": true,
+  "apiKey": "",
+  "chatMode": "hybrid",
+  "useActiveNote": false,
+  "excludeFolders": ".obsidian, .trash",
+  "contextNResults": 10,
+  "chatHistoryFolder": "VaultChatHistory"
+}

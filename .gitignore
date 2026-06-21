@@ -1,0 +1,30 @@
+# --- Secrets & local config (NEVER commit) ---
+.env
+plugin/data.json
+**/api_key.txt
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# --- Local data / indexes / logs ---
+.vault-search/
+*.lance/
+lance_db/
+*.jsonl
+*.log
+knowledge_graph.json
+file_hashes.json
+extract_progress.json
+textbook_hashes.json
+textbook_index_errors*.json
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

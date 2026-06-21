@@ -1,0 +1,10 @@
+{
+  "id": "vault-search-plugin",
+  "name": "Vault Semantic Search",
+  "version": "2.5.1",
+  "minAppVersion": "1.0.0",
+  "description": "Local-first semantic search + AI chat over your vault (LanceDB + Ollama).",
+  "author": "P.W. Chen",
+  "authorUrl": "https://drpwchen.com",
+  "isDesktopOnly": false
+}

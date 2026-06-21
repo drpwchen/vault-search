@@ -1,0 +1,20 @@
+# Core (required for the three-piece set: search / similar / chat)
+lancedb>=0.13
+ollama>=0.3
+pyarrow>=15
+fastapi>=0.110
+uvicorn>=0.29
+pydantic>=2.0
+
+# Optional: auto-load a .env file in the repo root
+python-dotenv>=1.0
+
+# Optional: textbook/secondary-corpus indexing (parent-child chunking)
+#   needs the Qwen3 tokenizer
+transformers>=4.40
+
+# Optional: knowledge-graph entity extraction (Phase B NER)
+#   scispacy + a model, e.g.:
+#   pip install scispacy
+#   pip install https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.4/en_core_sci_sm-0.5.4.tar.gz
+# scispacy>=0.5.4

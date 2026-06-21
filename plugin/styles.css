@@ -1,0 +1,817 @@
+.vault-search-container {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.vault-search-input-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.vault-search-input {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 14px;
+}
+
+.vault-search-input:focus {
+  border-color: var(--interactive-accent);
+  outline: none;
+}
+
+.vault-search-btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: none;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.vault-search-btn:hover {
+  opacity: 0.9;
+}
+
+.vault-search-results {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.vault-search-result {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.vault-search-result:hover {
+  background: var(--background-secondary);
+}
+
+.vault-search-note-name {
+  font-weight: 600;
+  color: var(--text-normal);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.vault-search-note-name:hover {
+  color: var(--text-accent);
+  text-decoration: underline;
+}
+
+.vault-search-section {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-left: 4px;
+}
+
+.vault-search-meta {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.vault-search-sim {
+  font-weight: 600;
+  color: var(--text-accent);
+}
+
+.vault-search-status {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.vault-search-error {
+  color: var(--text-error);
+}
+
+.vault-search-group-heading {
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  padding: 10px 10px 4px;
+  border-bottom: 2px solid var(--interactive-accent);
+  margin-top: 4px;
+}
+
+.vault-search-header-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vault-search-toggle {
+  cursor: pointer;
+  font-size: 10px;
+  color: var(--text-muted);
+  width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.vault-search-toggle:hover {
+  color: var(--text-accent);
+}
+
+.vault-search-preview {
+  margin: 6px 0 2px 0;
+  padding: 6px 8px;
+  background: var(--background-secondary);
+  border-radius: 6px;
+  border-left: 3px solid var(--interactive-accent);
+  font-size: 13px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.vault-search-preview p,
+.vault-search-preview li {
+  margin: 2px 0;
+}
+
+.vault-search-preview ul,
+.vault-search-preview ol {
+  padding-left: 16px;
+  margin: 2px 0;
+}
+
+.vault-search-preview blockquote {
+  margin: 2px 0;
+  padding-left: 8px;
+}
+
+.vault-search-preview h1,
+.vault-search-preview h2,
+.vault-search-preview h3 {
+  font-size: 14px;
+  margin: 6px 0 2px;
+}
+
+.vault-search-preview table {
+  font-size: 12px;
+}
+
+.vault-search-preview .markdown-rendered {
+  padding: 0;
+}
+
+/* === Chat View === */
+
+.vault-chat-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* --- Toolbar --- */
+
+.vault-chat-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  flex-shrink: 0;
+}
+
+.vault-chat-toolbar-icon {
+  font-size: 14px;
+  padding: 2px 5px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.vault-chat-toolbar-icon:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.vault-chat-toolbar-icon.vault-chat-toolbar-icon-active {
+  background: var(--interactive-accent) !important;
+  color: var(--text-on-accent) !important;
+  border-radius: 4px;
+}
+
+.vault-chat-context-group {
+  display: flex;
+  gap: 0;
+  margin: 0 10px;
+}
+
+.vault-chat-action-group {
+  display: flex;
+  gap: 0;
+}
+
+/* Mode switcher button group */
+
+.vault-chat-mode-group {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.vault-chat-mode-btn {
+  font-size: 13px;
+  padding: 2px 6px;
+  border: none;
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  cursor: pointer;
+  border-right: 1px solid var(--background-modifier-border);
+}
+
+.vault-chat-mode-btn:last-child {
+  border-right: none;
+}
+
+.vault-chat-mode-btn.vault-chat-mode-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.vault-chat-mode-btn:hover:not(.vault-chat-mode-active) {
+  background: var(--background-modifier-hover);
+}
+
+/* .vault-chat-usage removed for mobile usability */
+
+/* (context bar removed — active note toggle moved to toolbar icon) */
+
+/* --- Messages --- */
+
+.vault-chat-messages {
+  flex: 1 1 0%;
+  overflow-y: scroll;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.vault-chat-msg {
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 90%;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  position: relative;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.vault-chat-user {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  align-self: flex-end;
+  border-bottom-right-radius: 2px;
+}
+
+.vault-chat-assistant {
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  align-self: flex-start;
+  border-bottom-left-radius: 2px;
+}
+
+.vault-chat-assistant-content p,
+.vault-chat-assistant-content li {
+  margin: 2px 0;
+}
+
+.vault-chat-assistant-content ul,
+.vault-chat-assistant-content ol {
+  padding-left: 16px;
+  margin: 2px 0;
+}
+
+.vault-chat-assistant-content h1,
+.vault-chat-assistant-content h2,
+.vault-chat-assistant-content h3 {
+  font-size: 14px;
+  margin: 6px 0 2px;
+}
+
+.vault-chat-assistant-content .markdown-rendered {
+  padding: 0;
+}
+
+.vault-chat-assistant-content {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+  overflow-x: auto;
+  min-width: 0;
+}
+
+.vault-chat-assistant-content pre,
+.vault-chat-assistant-content code {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.vault-chat-assistant-content table {
+  font-size: 12px;
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.vault-chat-system {
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+  align-self: center;
+  font-style: italic;
+}
+
+.vault-chat-loading {
+  color: var(--text-muted);
+  font-style: italic;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.vault-chat-streaming .vault-chat-assistant-content {
+  white-space: pre-wrap;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.vault-chat-stop-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--text-error);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-error);
+  cursor: pointer;
+  font-style: normal;
+}
+
+.vault-chat-stop-btn:hover {
+  background: var(--text-error);
+  color: var(--text-on-accent);
+}
+
+/* --- Copy button (top-right of assistant message) --- */
+
+.vault-chat-copy-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  opacity: 0.3;
+  padding: 2px 4px;
+  border-radius: 3px;
+  z-index: 1;
+}
+
+.vault-chat-msg:hover .vault-chat-copy-btn {
+  opacity: 0.7;
+}
+
+.vault-chat-copy-btn:hover {
+  opacity: 1;
+  background: var(--background-modifier-hover);
+}
+
+/* --- Suggested notes bar --- */
+
+.vault-chat-suggest-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--background-modifier-border);
+}
+
+.vault-chat-suggest-label {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.vault-chat-suggest-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  background: var(--background-primary);
+  border: 1px solid var(--interactive-accent);
+  border-radius: 10px;
+  color: var(--interactive-accent);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.vault-chat-suggest-chip:hover {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.vault-chat-suggest-chip.vault-chat-suggest-added {
+  background: var(--background-secondary);
+  border-color: var(--text-faint);
+  color: var(--text-faint);
+}
+
+/* --- Message footer (refs + usage) --- */
+
+.vault-chat-msg-footer {
+  margin-top: 4px;
+}
+
+.vault-chat-refs {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.vault-chat-refs-toggle {
+  font-size: 10px;
+  color: var(--text-faint);
+  cursor: pointer;
+  user-select: none;
+}
+
+.vault-chat-refs-toggle:hover {
+  color: var(--text-muted);
+}
+
+.vault-chat-refs-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.vault-chat-ref-chip {
+  font-size: 11px;
+  padding: 1px 6px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  cursor: pointer;
+  color: var(--text-accent);
+}
+
+.vault-chat-ref-chip:hover {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.vault-chat-msg-usage {
+  font-size: 10px;
+  color: var(--text-faint);
+  text-align: right;
+  margin-top: 2px;
+}
+
+/* --- Mention chips (above input) --- */
+
+.vault-chat-mention-chips {
+  display: none;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 8px;
+  flex-shrink: 0;
+}
+
+.vault-chat-mention-chip {
+  font-size: 11px;
+  padding: 1px 6px;
+  background: var(--background-primary);
+  border: 1px solid var(--text-accent);
+  border-radius: 10px;
+  color: var(--text-accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.vault-chat-mention-remove {
+  cursor: pointer;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.vault-chat-mention-remove:hover {
+  color: var(--text-error);
+}
+
+/* --- Context picker --- */
+
+.vault-chat-context-picker {
+  padding: 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  max-height: 200px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.vault-chat-picker-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.vault-chat-picker-close {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.vault-chat-picker-close:hover {
+  color: var(--text-error);
+}
+
+.vault-chat-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  font-size: 12px;
+}
+
+.vault-chat-picker-name {
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.vault-chat-picker-section {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.vault-chat-picker-sim {
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+/* --- Input area --- */
+
+.vault-chat-input-area {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 6px;
+  border-top: 1px solid var(--background-modifier-border);
+  flex-shrink: 0;
+}
+
+.vault-chat-textarea-wrapper {
+  position: relative;
+  flex: 1;
+}
+
+.vault-chat-input {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 13px;
+  font-family: inherit;
+  resize: none;
+  box-sizing: border-box;
+}
+
+.vault-chat-input:focus {
+  border-color: var(--interactive-accent);
+  outline: none;
+}
+
+/* @ autocomplete dropdown */
+
+.vault-chat-autocomplete {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 100;
+  margin-bottom: 2px;
+}
+
+.vault-chat-autocomplete-item {
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text-normal);
+}
+
+.vault-chat-autocomplete-item:hover,
+.vault-chat-autocomplete-item.vault-chat-autocomplete-active {
+  background: var(--background-secondary);
+  color: var(--text-accent);
+}
+
+.vault-chat-input-row-main {
+  display: flex;
+  gap: 4px;
+  align-items: flex-end;
+}
+
+.vault-chat-btn-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.vault-chat-icon-btn {
+  width: 30px;
+  height: 26px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  background: var(--background-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.vault-chat-icon-btn:hover {
+  background: var(--background-modifier-hover);
+}
+
+.vault-chat-send-icon-btn {
+  width: 30px;
+  height: 26px;
+  border: none;
+  border-radius: 4px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.vault-chat-send-icon-btn:hover {
+  opacity: 0.9;
+}
+
+/* --- Context preview modal --- */
+
+.vault-chat-preview-section {
+  margin: 10px 0;
+  padding: 8px;
+  background: var(--background-secondary);
+  border-radius: 6px;
+}
+
+.vault-chat-preview-section h4 {
+  margin: 0 0 6px 0;
+  font-size: 13px;
+}
+
+.vault-chat-preview-file {
+  font-size: 12px;
+  color: var(--text-accent);
+  padding: 2px 0;
+}
+
+.vault-chat-preview-content {
+  font-size: 11px;
+  max-height: 150px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  background: var(--background-primary);
+  padding: 6px;
+  border-radius: 4px;
+  margin-top: 4px;
+}
+
+.vault-chat-preview-empty {
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 10px;
+  text-align: center;
+}
+
+.vault-chat-preview-tokens {
+  margin-top: 10px;
+  padding: 6px 10px;
+  background: var(--background-primary-alt);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.vault-chat-preview-btns {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.vault-chat-preview-btns button {
+  padding: 6px 16px;
+  border-radius: 4px;
+  border: 1px solid var(--background-modifier-border);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.vault-chat-preview-btns button.mod-cta {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border: none;
+}
+
+/* === Context View (Related Notes) === */
+
+.vault-context-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  flex-shrink: 0;
+}
+
+.vault-context-status {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-left: 4px;
+}
+
+.vault-context-status.is-loading {
+  font-style: italic;
+}
+
+.vault-context-status.is-error {
+  color: var(--text-error);
+}
+
+.vault-context-toolbar-btn {
+  font-size: 14px;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.vault-context-toolbar-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.vault-context-toolbar-btn.is-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
