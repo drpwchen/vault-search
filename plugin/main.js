@@ -1934,7 +1934,7 @@ class VaultSearchPlugin extends Plugin {
 
     // — Vault Semantic Search — crafted by P.W. Chen (drpwchen.com) —
     console.log(
-      "%c🔍 Vault Semantic Search%c  by P.W. Chen · https://drpwchen.com · github.com/drpwchen/obsidian-vault-search",
+      "%c🔍 Vault Semantic Search%c  by P.W. Chen · https://drpwchen.com · github.com/drpwchen/vault-search",
       "font-weight:bold;color:#2dd4bf",
       "color:inherit"
     );

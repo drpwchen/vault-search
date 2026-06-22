@@ -8,6 +8,15 @@
 
 ![搜尋面板截圖](docs/images/search.png)
 
+### 兩種使用方式（共用同一份索引）
+
+這個 repo 提供**兩個前端、共用同一份地端 LanceDB 索引 + 檢索核心**，兩個都用或擇一都行：
+
+- **`vault-search-obsidian`** — Obsidian plugin（側欄的 Search／Related Notes／Chat），連到一支小型地端 API server。→ [快速開始](#vault-search-obsidian--obsidian-plugin)
+- **`vault-search-mcp`** — 一支 MCP server，把同一套搜尋以工具（`vault_search`、`vault_similar`、`vault_stats`、`textbook_search`）開給 Claude Code 或任何 MCP client。**不需要 Obsidian**。→ [快速開始](#vault-search-mcp--在-claude-code或任何-mcp-client中使用)
+
+兩者共用同一份 `server/` 核心（indexer · scoring · Personalized PageRank · 知識圖譜），所以你只要索引一次，就能從任何地方查詢。
+
 ---
 
 ## 三套組
@@ -103,30 +112,27 @@ ollama pull gemma2:9b
 
 ## 安裝
 
-### 1. Server
+### Step 0 — 共用核心（只做一次，兩個前端都需要）
 
 ```bash
-git clone https://github.com/drpwchen/obsidian-vault-search.git
-cd obsidian-vault-search
+git clone https://github.com/drpwchen/vault-search.git
+cd vault-search
 pip install -r requirements.txt
 
 cp env.example .env          # 然後編輯 .env——把 VAULT_PATH 設成你的 vault 路徑
-```
 
-建索引並啟動 API server：
-
-```bash
 cd server
-python indexer.py            # 第一次完整索引（之後執行為增量）
-python api_server.py         # 服務於 http://localhost:3789
+python indexer.py            # 建索引（之後執行為增量）
 ```
 
-### 2. Obsidian plugin
+若還沒拉模型，先 `ollama pull bge-m3`（見[先備條件](#先備條件)）。接著從下面兩個前端擇一或都裝。
 
-把 plugin 複製進你的 vault，然後啟用：
+### `vault-search-obsidian` — Obsidian plugin
+
+啟動地端 API server，再安裝 plugin：
 
 ```bash
-# 在 repo 根目錄
+python server/api_server.py                       # 服務於 http://localhost:3789
 cp -r plugin "<你的VAULT>/.obsidian/plugins/vault-search-plugin"
 ```
 
@@ -134,13 +140,15 @@ cp -r plugin "<你的VAULT>/.obsidian/plugins/vault-search-plugin"
 
 > plugin 附了一份 `data.json.example`。Obsidian 會在首次執行時寫出真正的 `data.json`；千萬不要把含 API key 的 `data.json` commit 上去。
 
-### 3.（選用）給 Claude Code 的 MCP server
+### `vault-search-mcp` — 在 Claude Code（或任何 MCP client）中使用
+
+不需要 Obsidian、不需要 API server——直接拿 Step 0 建好的索引註冊 MCP server：
 
 ```bash
 claude mcp add vault-search -- python "/abs/path/to/server/mcp_server.py"
 ```
 
-之後 Claude Code 就能直接呼叫 `vault_search` / `vault_similar` / `vault_stats`。
+之後 Claude Code（或任何 MCP client）就能呼叫 `vault_search`、`vault_similar`、`vault_stats`，以及（若你有索引參考語料）`textbook_search`，全部背後共用同一份地端索引、Personalized PageRank 擴展與重新排序。
 
 ---
 

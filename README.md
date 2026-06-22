@@ -8,6 +8,15 @@ Built by a physician to study from a vault of thousands of clinical notes, but *
 
 ![Search panel screenshot](docs/images/search.png)
 
+### Two ways to use it (one shared index)
+
+This repo ships **two front-ends over the same local LanceDB index + retrieval core** — use either or both:
+
+- **`vault-search-obsidian`** — the Obsidian plugin (Search / Related Notes / Chat in the sidebar), talking to a small local API server. → [Quickstart](#vault-search-obsidian--the-obsidian-plugin)
+- **`vault-search-mcp`** — an MCP server exposing the same search as tools (`vault_search`, `vault_similar`, `vault_stats`, `textbook_search`) to Claude Code or any MCP client. No Obsidian required. → [Quickstart](#vault-search-mcp--use-it-from-claude-code-or-any-mcp-client)
+
+Both reuse the same `server/` core (indexer · scoring · Personalized-PageRank · knowledge graph), so you index once and query from wherever you like.
+
 ---
 
 ## The three-piece set (三套組)
@@ -103,30 +112,27 @@ ollama pull gemma2:9b
 
 ## Installation
 
-### 1. Server
+### Step 0 — shared core (do this once, for either front-end)
 
 ```bash
-git clone https://github.com/drpwchen/obsidian-vault-search.git
-cd obsidian-vault-search
+git clone https://github.com/drpwchen/vault-search.git
+cd vault-search
 pip install -r requirements.txt
 
 cp env.example .env          # then edit .env — set VAULT_PATH to your vault
-```
 
-Build the index and start the API server:
-
-```bash
 cd server
-python indexer.py            # first full index (incremental on later runs)
-python api_server.py         # serves http://localhost:3789
+python indexer.py            # build the index (incremental on later runs)
 ```
 
-### 2. Obsidian plugin
+`ollama pull bge-m3` first if you haven't (see [Prerequisites](#prerequisites)). Now pick one or both front-ends below.
 
-Copy the plugin into your vault, then enable it:
+### `vault-search-obsidian` — the Obsidian plugin
+
+Start the local API server, then install the plugin:
 
 ```bash
-# from the repo root
+python server/api_server.py                       # serves http://localhost:3789
 cp -r plugin "<YOUR_VAULT>/.obsidian/plugins/vault-search-plugin"
 ```
 
@@ -134,13 +140,15 @@ In Obsidian: **Settings → Community plugins → enable "Vault Semantic Search"
 
 > The plugin ships a `data.json.example`. Obsidian writes its real `data.json` on first run; never commit a `data.json` that contains an API key.
 
-### 3. (Optional) MCP server for Claude Code
+### `vault-search-mcp` — use it from Claude Code (or any MCP client)
+
+No Obsidian, no API server — just register the MCP server against the index you built in Step 0:
 
 ```bash
 claude mcp add vault-search -- python "/abs/path/to/server/mcp_server.py"
 ```
 
-Now Claude Code can call `vault_search` / `vault_similar` / `vault_stats` directly.
+Now Claude Code (or any MCP client) can call `vault_search`, `vault_similar`, `vault_stats`, and — if you indexed a reference corpus — `textbook_search`, all backed by the same local index, Personalized-PageRank expansion, and reranking.
 
 ---
 

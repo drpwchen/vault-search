@@ -856,7 +856,7 @@ def main():
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
                     "serverInfo": {
-                        "name": "vault-search",
+                        "name": "vault-search-mcp",
                         "version": "3.0.0",
                         "author": "P.W. Chen (drpwchen.com)",
                     },
