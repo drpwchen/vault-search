@@ -74,6 +74,7 @@ Obsidian 內建搜尋是字面比對——它找你打的字。但你幾個月�
 
 - **`indexer.py`** 走訪你的 vault，把每則筆記依標題切成 chunk，用 `bge-m3` embedding，存進地端 **LanceDB** 表。再次執行是增量的（內容雜湊快取）。
 - **`scoring.py`** 對原始向量結果重新排序，可選的**路徑加權**（讓你更信任某些資料夾）、**時近性**（新筆記排前面）、**關係**加權。
+- **`ppr.py`** 用 **Personalized PageRank** 在 `[[wiki-link]]` 圖上排序筆記——HippoRAG / LinearRAG 風格的 random walk with restart。它驅動 **Related Notes** 與多跳的**查詢擴展**（以語意搜尋的 top 命中為種子做隨機遊走），找出純向量相似度漏掉的相關筆記。在作者的 vault 上，相較於樸素的 1-hop／共享連結擴展，sparse-bridge recall@10 從 ~60% 提升到 ~84%。
 - **`api_server.py`** 服務 plugin：語意搜尋、找相似、單篇重新索引，以及對話（含檢索增強的 context）。
 - **`mcp_server.py`** 把同一套搜尋以 MCP 工具開給 Claude Code 等：`vault_search`、`vault_similar`、`vault_stats`。
 - **選用 add-on：** 第二份長文**參考語料**（`textbook_indexer.py`，parent-child 切塊）與 `[[wikilink]]` + 實體的**知識圖譜**（`graph_builder.py`）。
@@ -187,7 +188,7 @@ python graph_builder.py            # 解析 [[wikilink]] 成鄰接圖
 python graph_builder.py --ner      # 選用：scispaCy/NER 實體抽取
 ```
 
-存在時，搜尋結果會被連結筆記與抽出的關係加以擴充。NER 步驟需要 `scispacy`（見 `requirements.txt`）。
+存在時，wiki-link 圖會驅動 `ppr.py` 的 **Personalized PageRank** 檢索（Related Notes + 查詢擴展），搜尋結果也會被連結筆記與抽出的關係加以擴充。NER 步驟需要 `scispacy`（見 `requirements.txt`）。PPR 本身是純 Python，只需要 wiki-link 圖（Phase A），不需要 NER。
 </details>
 
 ---
@@ -219,7 +220,7 @@ python graph_builder.py --ner      # 選用：scispaCy/NER 實體抽取
 ## 專案結構
 
 ```
-server/      indexer · scoring · api_server · mcp_server   （核心三套組）
+server/      indexer · scoring · ppr · api_server · mcp_server   （核心三套組）
              textbook_indexer · graph_builder              （選用 add-on）
              config.py                                      （所有設定，環境變數驅動）
 plugin/      main.js · manifest.json · styles.css           （Obsidian plugin）

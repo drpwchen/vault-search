@@ -74,6 +74,7 @@ The design priority is **local-first and private**:
 
 - **`indexer.py`** walks your vault, splits each note into chunks by heading, embeds them with `bge-m3`, and stores them in a local **LanceDB** table. Re-runs are incremental (content-hash cache).
 - **`scoring.py`** reranks raw vector hits with optional **path weighting** (trust some folders more), **recency** (newer notes rank higher), and **relation** boosts.
+- **`ppr.py`** ranks notes by **Personalized PageRank** over the `[[wiki-link]]` graph — a HippoRAG / LinearRAG-style random-walk-with-restart. It powers **Related Notes** and multi-hop **query expansion** (seeding the walk on the top semantic hits), surfacing relevant notes that pure vector similarity misses. On the author's vault this lifted sparse-bridge recall@10 from ~60% to ~84% versus naive 1-hop / shared-link expansion.
 - **`api_server.py`** serves the plugin: semantic search, find-similar, single-note reindex, and chat (with retrieval-augmented context).
 - **`mcp_server.py`** exposes the same search to MCP clients (e.g. Claude Code) as `vault_search`, `vault_similar`, `vault_stats`.
 - **Optional add-ons:** a second long-form **reference corpus** (`textbook_indexer.py`, parent-child chunking) and a **knowledge graph** of `[[wikilinks]]` + entities (`graph_builder.py`).
@@ -187,7 +188,7 @@ python graph_builder.py            # parse [[wikilinks]] into an adjacency graph
 python graph_builder.py --ner      # optional: scispaCy/NER entity extraction
 ```
 
-When present, search results are enriched with linked notes and extracted relations. The NER step needs `scispacy` (see `requirements.txt`).
+When present, the wiki-link graph drives the **Personalized PageRank** retrieval in `ppr.py` (Related Notes + query expansion), and search results are enriched with linked notes and extracted relations. The NER step needs `scispacy` (see `requirements.txt`). PPR itself is pure-Python and needs only the wiki-link graph (Phase A) — no NER required.
 </details>
 
 ---
@@ -219,7 +220,7 @@ Want a cloud embedder instead of Ollama? The embedding call is isolated in `inde
 ## Repository layout
 
 ```
-server/      indexer · scoring · api_server · mcp_server   (core three-piece set)
+server/      indexer · scoring · ppr · api_server · mcp_server   (core three-piece set)
              textbook_indexer · graph_builder              (optional add-ons)
              config.py                                      (all settings, env-driven)
 plugin/      main.js · manifest.json · styles.css           (Obsidian plugin)

@@ -26,6 +26,7 @@ import ollama
 from scoring import rerank
 from indexer import open_db, TABLE_NAME, EMBEDDING_MODEL, OLLAMA_HOST, QUERY_PREFIX, _escape_sql
 from graph_builder import load_graph, get_neighbors
+from ppr import personalized_pagerank, related_notes
 
 # Textbook v2 constants — separate model from vault (vault stays bge-m3)
 from textbook_indexer import (
@@ -305,6 +306,25 @@ TOOLS = [
                 }
             },
             "required": ["query"]
+        }
+    },
+    {
+        "name": "vault_related",
+        "description": "Find notes RELATED to a given note via the wiki-link graph (personalized PageRank / LinearRAG-style propagation). Unlike vault_search (semantic), this seeds from a note's own links and surfaces multi-hop connected notes — including ones that share no text but are conceptually linked. Use to discover related notes, expand context around a note, or suggest links. Give the note's title (filename without .md).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "note": {
+                    "type": "string",
+                    "description": "The note title (filename without .md) to find related notes for. E.g. 'Achilles tendinopathy' or 'CVA'."
+                },
+                "n_results": {
+                    "type": "integer",
+                    "description": "Number of related notes to return (default: 12, max: 30)",
+                    "default": 12
+                }
+            },
+            "required": ["note"]
         }
     },
     {
@@ -639,15 +659,18 @@ def handle_tool_call(name: str, arguments: dict) -> str:
             # Trim to requested n after dedup + rerank
             deduped = deduped[:n]
 
-            # Graph expansion: add linked notes not already in results
+            # Graph expansion: PPR (personalized PageRank) seeded on the top semantic
+            # hits ranks multi-hop linked notes by graph proximity — replaces the old
+            # naive 1-hop neighbor expansion (sparse-bridge recall@10 ~60% -> ~84%).
             result_notes = {r["note"] for r in deduped}
-            graph_suggested = []
-            for r in deduped[:3]:  # Expand top 3 results
-                neighbors = get_neighbors(graph, r["note"], hops=1)
-                for nb in neighbors:
-                    if nb not in result_notes:
-                        result_notes.add(nb)
-                        graph_suggested.append(nb)
+            adjacency = graph.get("adjacency", {})
+            ppr_ranked = personalized_pagerank(
+                adjacency,
+                [r["note"] for r in deduped[:5]],
+                top_k=15,
+                exclude=result_notes,
+            )
+            graph_suggested = [n for n, _ in ppr_ranked]
 
             # Remove internal mtime field from output
             for r in deduped:
@@ -679,6 +702,32 @@ def handle_tool_call(name: str, arguments: dict) -> str:
 
             return _safe_json_dumps(result, indent=2)
 
+        elif name == "vault_related":
+            note = arguments["note"]
+            n = min(arguments.get("n_results", 12), 30)
+            graph = get_graph()
+            adjacency = graph.get("adjacency", {})
+            if note not in adjacency:
+                return _safe_json_dumps(
+                    {"note": note, "error": "note not found in wiki-link graph", "related": []},
+                    indent=2,
+                )
+            exclude_cowork = bool(arguments.get("exclude_cowork", True))
+            ranked = related_notes(adjacency, note, top_k=n * 3)
+            meta = graph.get("metadata", {})
+            related = []
+            for rn, sc in ranked:
+                folder = meta.get(rn, {}).get("folder", "")
+                file_path = meta.get(rn, {}).get("file", "") or rn
+                if exclude_cowork and (_is_cowork_path(file_path) or _is_cowork_path(folder)):
+                    continue
+                related.append({"note": rn, "score": round(sc, 4), "folder": folder})
+                if len(related) >= n:
+                    break
+            return _safe_json_dumps(
+                {"note": note, "related": related, "total": len(related)}, indent=2
+            )
+
         elif name == "vault_similar":
             note_name = arguments["note_name"]
             n = min(arguments.get("n_results", 10), 30)
@@ -689,21 +738,46 @@ def handle_tool_call(name: str, arguments: dict) -> str:
                 return json.dumps({"error": f"Note '{note_name}' not found in index"})
 
             query_embedding = note_rows.iloc[0]["vector"]
-            results_df = table.search(query_embedding).metric("cosine").limit(n + 10).to_pandas()
-
+            cand = max(n * 3, 40)
+            results_df = table.search(query_embedding).metric("cosine").limit(cand).to_pandas()
             formatted = format_results(results_df, include_excerpt=True)
-            # Remove the source note itself and deduplicate
-            seen_notes = {note_name: True}
-            deduped = []
+
+            # Semantic candidates (note -> dict), preserving order, source note dropped
+            sem, sem_order = {}, []
             for r in formatted:
                 note = r["note"]
-                if note not in seen_notes:
-                    seen_notes[note] = True
-                    deduped.append(r)
+                if note == note_name or note in sem:
+                    continue
+                sem[note] = r
+                sem_order.append(note)
 
-            # Rerank with path + recency weighting, then trim
-            deduped = rerank(deduped)
-            deduped = deduped[:n]
+            # Graph candidates via personalized PageRank over the wiki-link graph
+            # (LinearRAG-style) — surfaces multi-hop related notes semantic misses.
+            graph = get_graph()
+            meta = graph.get("metadata", {})
+            adjacency = graph.get("adjacency", {})
+            ppr_order = [nn for nn, _ in related_notes(adjacency, note_name, top_k=cand)] \
+                if note_name in adjacency else []
+
+            # Reciprocal-rank fusion of graph + semantic rankings
+            RRF_K = 60
+            fused = {}
+            for rank, nn in enumerate(sem_order):
+                fused[nn] = fused.get(nn, 0.0) + 1.0 / (RRF_K + rank)
+            for rank, nn in enumerate(ppr_order):
+                fused[nn] = fused.get(nn, 0.0) + 1.0 / (RRF_K + rank)
+
+            deduped = []
+            for nn in sorted(fused, key=lambda k: fused[k], reverse=True):
+                d = sem.get(nn) or {
+                    "note": nn, "file": meta.get(nn, {}).get("file", ""),
+                    "folder": meta.get(nn, {}).get("folder", ""), "section": "", "excerpt": "",
+                }
+                d["similarity"] = round(fused[nn], 6)
+                deduped.append(d)
+
+            # Rerank applies path + recency on the fused score, then trim
+            deduped = rerank(deduped)[:n]
 
             # Remove internal mtime field from output
             for r in deduped:
