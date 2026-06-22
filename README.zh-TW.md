@@ -20,6 +20,16 @@
 
 三者都在 Obsidian 側欄。同一份索引還會開出一個 **MCP server**，讓 Claude Code 這類 coding agent 能把「搜尋你的 vault」當成一個工具來呼叫。
 
+### 截圖
+
+| 🔍 Vault Search | 🔗 Related Notes |
+|---|---|
+| ![Vault Search](docs/images/search.png) | ![Related Notes](docs/images/related.png) |
+
+| 💬 Vault Chat | 👁 Context 預覽 |
+|---|---|
+| ![Vault Chat](docs/images/chat.png) | ![Context preview](docs/images/chat-context.png) |
+
 ---
 
 ## 為什麼做這個

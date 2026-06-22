@@ -20,6 +20,16 @@ Built by a physician to study from a vault of thousands of clinical notes, but *
 
 All three live in the Obsidian sidebar. The same index also exposes an **MCP server**, so coding agents like Claude Code can search your vault as a tool.
 
+### Screenshots
+
+| 🔍 Vault Search | 🔗 Related Notes |
+|---|---|
+| ![Vault Search](docs/images/search.png) | ![Related Notes](docs/images/related.png) |
+
+| 💬 Vault Chat | 👁 Context preview |
+|---|---|
+| ![Vault Chat](docs/images/chat.png) | ![Context preview](docs/images/chat-context.png) |
+
 ---
 
 ## Why it exists
