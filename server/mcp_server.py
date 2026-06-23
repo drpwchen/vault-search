@@ -262,6 +262,104 @@ def format_results(results_df, include_excerpt: bool = False) -> list[dict]:
     return formatted
 
 
+# --- Compact Markdown output (token-efficient; replaces raw nested JSON) ---
+# Tool results fed to the model as raw indent=2 JSON spend ~50-60% of tokens on
+# braces, quotes, key names, and duplicate/internal fields. Markdown drops that
+# overhead with zero loss of the information the model actually uses. The
+# observability JSON still goes to the .jsonl search log.
+
+def _fmt_sim(s) -> str:
+    return f"{s:.2f}" if isinstance(s, (int, float)) else "?"
+
+
+def format_vault_markdown(results: list[dict], query: str, *,
+                          include_excerpt: bool = False,
+                          graph_linked: list[str] | None = None,
+                          entities: list[dict] | None = None,
+                          relations: list[dict] | None = None,
+                          header: str = "vault_search") -> str:
+    """Render vault_search / vault_similar results as compact Markdown."""
+    if not results:
+        return f'No vault notes found for "{query}".'
+    lines = [f'# {header}: "{query}" — {len(results)} notes', ""]
+    for i, r in enumerate(results, 1):
+        meta = []
+        sec = r.get("section", "")
+        if sec:
+            meta.append(sec)
+        folder = r.get("folder", "")
+        if folder:
+            meta.append(folder)
+        meta.append(f"sim {_fmt_sim(r.get('similarity'))}")
+        lines.append(f"{i}. [[{r.get('note','')}]] · " + " · ".join(meta))
+        tags = r.get("tags", "")
+        if tags and tags not in ("", "[]", "nan"):
+            lines.append(f"   tags: {tags}")
+        if include_excerpt and r.get("excerpt"):
+            lines.append(f"   {r['excerpt']}")
+    if graph_linked:
+        lines += ["", "graph-linked: " + ", ".join(f"[[{n}]]" for n in graph_linked)]
+    if entities:
+        lines += ["", "entities:"]
+        for e in entities:
+            parts = []
+            for x in e.get("entities", []):
+                nm = " ".join(str(x.get("name", "")).split())[:40]
+                if nm:
+                    parts.append(f"{nm}({x.get('type','')})")
+            if parts:
+                lines.append(f"- [[{e.get('note','')}]]: {', '.join(parts)}")
+    if relations:
+        rel_str = ", ".join(
+            f"{r.get('from','')} —{r.get('type','')}→ {r.get('to','')}" for r in relations
+        )
+        lines += ["", "relations: " + rel_str]
+    return "\n".join(lines)
+
+
+def format_related_markdown(related: list[dict], note: str) -> str:
+    """Render vault_related results as compact Markdown."""
+    if not related:
+        return f'No graph-related notes found for "{note}".'
+    lines = [f'# vault_related: [[{note}]] — {len(related)} related', ""]
+    for i, r in enumerate(related, 1):
+        meta = [m for m in (r.get("folder", ""),) if m]
+        meta.append(f"score {_fmt_sim(r.get('score'))}")
+        lines.append(f"{i}. [[{r.get('note','')}]] · " + " · ".join(meta))
+    return "\n".join(lines)
+
+
+def format_textbook_markdown(results: list[dict], query: str) -> str:
+    """Render textbook_search results as compact Markdown.
+
+    Drops internal/duplicate fields (parent_id, section==section_path,
+    page==page_start, parent_truncated, *_tokens, chunk_*, n_siblings,
+    heading_origin, and the child `text` excerpt already contained in parent_text)."""
+    if not results:
+        return f'No textbook passages found for "{query}".'
+    lines = [f'# textbook_search: "{query}" — {len(results)} passages', ""]
+    for i, r in enumerate(results, 1):
+        loc = []
+        ps, pe = r.get("page_start", 0), r.get("page_end", 0)
+        if ps:
+            loc.append(f"p.{ps}-{pe}" if pe and pe != ps else f"p.{ps}")
+        loc.append(f"sim {_fmt_sim(r.get('similarity'))}")
+        sec = r.get("section") or r.get("section_path") or ""
+        head = f"{i}. **{r.get('book','')}**"
+        if sec:
+            head += f" · {sec}"
+        head += " · " + " · ".join(loc)
+        lines.append(head)
+        lines.append(f"   ({r.get('file','')})")
+        ptext = r.get("parent_text") or r.get("text") or ""
+        if ptext:
+            lines.append(ptext)
+        if r.get("has_figure_ref") and r.get("figure_ids"):
+            lines.append(f"   figures: {', '.join(r['figure_ids'])}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
 # --- MCP Protocol ---
 
 TOOLS = [
@@ -598,11 +696,7 @@ def _textbook_search_v2(arguments: dict) -> str:
     except Exception:
         pass  # never let logging break search
 
-    return _safe_json_dumps({
-        "query": query,
-        "results": formatted_results,
-        "total": len(formatted_results),
-    }, indent=2)
+    return _clean(format_textbook_markdown(formatted_results, query))
 
 
 def handle_tool_call(name: str, arguments: dict) -> str:
@@ -677,30 +771,22 @@ def handle_tool_call(name: str, arguments: dict) -> str:
                 r.pop("mtime", None)
                 r.pop("raw_similarity", None)
 
-            result = {
-                "query": query,
-                "results": deduped,
-                "total_results": len(deduped),
-            }
-            if graph_suggested:
-                result["graph_linked"] = graph_suggested[:10]
-
-            # Attach extracted entities for result notes
+            # Attach extracted entities + relations for result notes
             result_note_names = {r["note"] for r in deduped}
             entities_data = find_entities_for_notes(
                 graph.get("extracted_entities", {}), result_note_names
             )
-            if entities_data:
-                result["entities"] = entities_data
-
-            # Legacy: attach extracted relations if available
             relations = find_relations_for_notes(
                 graph_relations, result_note_names
             )
-            if relations:
-                result["relations"] = relations
 
-            return _safe_json_dumps(result, indent=2)
+            return _clean(format_vault_markdown(
+                deduped, query,
+                include_excerpt=include_excerpt,
+                graph_linked=graph_suggested[:10] if graph_suggested else None,
+                entities=entities_data or None,
+                relations=relations or None,
+            ))
 
         elif name == "vault_related":
             note = arguments["note"]
@@ -708,10 +794,7 @@ def handle_tool_call(name: str, arguments: dict) -> str:
             graph = get_graph()
             adjacency = graph.get("adjacency", {})
             if note not in adjacency:
-                return _safe_json_dumps(
-                    {"note": note, "error": "note not found in wiki-link graph", "related": []},
-                    indent=2,
-                )
+                return f'No wiki-link graph entry for "{note}".'
             exclude_cowork = bool(arguments.get("exclude_cowork", True))
             ranked = related_notes(adjacency, note, top_k=n * 3)
             meta = graph.get("metadata", {})
@@ -724,9 +807,7 @@ def handle_tool_call(name: str, arguments: dict) -> str:
                 related.append({"note": rn, "score": round(sc, 4), "folder": folder})
                 if len(related) >= n:
                     break
-            return _safe_json_dumps(
-                {"note": note, "related": related, "total": len(related)}, indent=2
-            )
+            return _clean(format_related_markdown(related, note))
 
         elif name == "vault_similar":
             note_name = arguments["note_name"]
@@ -784,11 +865,11 @@ def handle_tool_call(name: str, arguments: dict) -> str:
                 r.pop("mtime", None)
                 r.pop("raw_similarity", None)
 
-            return _safe_json_dumps({
-                "similar_to": note_name,
-                "results": deduped,
-                "total_results": len(deduped),
-            }, indent=2)
+            return _clean(format_vault_markdown(
+                deduped, note_name,
+                include_excerpt=True,
+                header="vault_similar",
+            ))
 
         elif name == "vault_stats":
             count = table.count_rows()
