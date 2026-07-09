@@ -245,3 +245,9 @@ Built by **Dr. P.W. Chen** — a physician who needed to actually find things in
 ## License
 
 MIT — see [LICENSE](./LICENSE). Contributions and issues welcome.
+
+## 🧋 Support
+
+If this tool saves you time, you can buy me a boba — it keeps the servers running 🧡
+
+[![Give me a Boba!](https://img.shields.io/badge/🧋_Give_me_a_Boba!-AD5138?style=for-the-badge)](https://drpwchen.bobaboba.me)
