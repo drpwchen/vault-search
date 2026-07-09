@@ -245,3 +245,9 @@ env.example  複製成 .env
 ## 授權
 
 MIT — 見 [LICENSE](./LICENSE)。歡迎 PR 與 issue。
+
+## 🧋 支持
+
+如果這個工具幫你省下時間，歡迎請我喝杯珍奶，讓伺服器繼續轉下去 🧡
+
+[![請我喝珍奶！](https://img.shields.io/badge/🧋_請我喝珍奶！-AD5138?style=for-the-badge)](https://drpwchen.bobaboba.me)
