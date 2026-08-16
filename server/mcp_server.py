@@ -706,8 +706,11 @@ def handle_tool_call(name: str, arguments: dict) -> str:
         # (CHUNKS_TABLE / PARENTS_TABLE), so an install that indexes only
         # textbooks has no 'vault' table at all — opening it up front made every
         # textbook_search fail with "Table 'vault' was not found".
+        # vault_related is not in this list: it answers from the wiki-link graph
+        # alone and never dereferences `table`, so a textbook-only install can
+        # still use it.
         table = None
-        if name in ("vault_search", "vault_related", "vault_similar"):
+        if name in ("vault_search", "vault_similar"):
             table = get_table()
 
         if name == "vault_search":

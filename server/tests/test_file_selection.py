@@ -110,6 +110,92 @@ def test_pycache_is_excluded():
         assert names(kept) == {"Book/ch01_a.md"}
 
 
+def test_readme_sibling_does_not_displace_the_book():
+    """A stray non-chapter markdown file is not evidence of a chapter split.
+
+    Treating it as one drops full_text.md from the selected set, and
+    orphan_cleanup() then deletes the only real copy of the book.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        all_md = build(root, {"Unsplit": ["full_text.md", "README.md"]})
+        kept, notes = select_md_files(all_md, SKIP, WHOLE)
+        assert names(kept) == {"Unsplit/full_text.md", "Unsplit/README.md"}
+        assert notes["whole_book_skipped"] == 0
+
+
+def test_case_variant_index_does_not_displace_the_book():
+    """`Index.md` is the same file as `INDEX.md` on Windows and macOS."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        all_md = build(root, {"Unsplit": ["full_text.md", "Index.md"]})
+        kept, notes = select_md_files(all_md, SKIP, WHOLE)
+        assert names(kept) == {"Unsplit/full_text.md"}
+        assert notes["whole_book_skipped"] == 0
+
+
+def test_whole_book_match_is_case_insensitive():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        all_md = build(root, {"Split": ["FULL_TEXT.MD", "ch01_a.md"]})
+        kept, notes = select_md_files(all_md, SKIP, WHOLE)
+        assert names(kept) == {"Split/ch01_a.md"}
+        assert notes["whole_book_skipped"] == 1
+
+
+def test_non_chapter_siblings_survive_alongside_chapters():
+    """Deduplication removes the whole-book file, not every other file."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        all_md = build(root, {"Split": ["full_text.md", "ch01_a.md", "README.md"]})
+        kept, _ = select_md_files(all_md, SKIP, WHOLE)
+        assert names(kept) == {"Split/ch01_a.md", "Split/README.md"}
+
+
+def test_numeric_prefix_chapters_count_as_chapters():
+    """The other convention seen in practice: 05_Imaging_Techniques.md"""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        all_md = build(root, {"Split": ["full_text.md", "05_Imaging.md", "06_Gait.md"]})
+        kept, notes = select_md_files(all_md, SKIP, WHOLE)
+        assert names(kept) == {"Split/05_Imaging.md", "Split/06_Gait.md"}
+        assert notes["whole_book_skipped"] == 1
+
+
+def test_page_range_splits_count_as_chapters():
+    """Page-range splits cover the same pages as the whole-book file."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        all_md = build(root, {
+            "Split": ["full_text.md", "pages_0001-0030.md", "pages_0031-0060.md"],
+        })
+        kept, notes = select_md_files(all_md, SKIP, WHOLE)
+        assert names(kept) == {"Split/pages_0001-0030.md", "Split/pages_0031-0060.md"}
+        assert notes["whole_book_skipped"] == 1
+
+
+def test_unrecognised_chapter_naming_keeps_both():
+    """Unknown convention → duplicates, which are visible. Never data loss."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        all_md = build(root, {"Split": ["full_text.md", "Introduction.md", "Gait.md"]})
+        kept, notes = select_md_files(all_md, SKIP, WHOLE)
+        assert "Split/full_text.md" in names(kept)
+        assert notes["whole_book_skipped"] == 0
+
+
+def test_custom_chapter_pattern():
+    import re
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        all_md = build(root, {"Split": ["full_text.md", "part-a.md", "part-b.md"]})
+        kept, notes = select_md_files(
+            all_md, SKIP, WHOLE, chapter_re=re.compile(r"^part-")
+        )
+        assert names(kept) == {"Split/part-a.md", "Split/part-b.md"}
+        assert notes["whole_book_skipped"] == 1
+
+
 def test_nested_volumes_are_independent():
     """Multi-volume books live in sibling subdirs; one volume's shape must not
     decide the other's."""

@@ -42,9 +42,14 @@ Three community reports, all reproducible, all fixed. Thanks to
 - **`VAULT_SEARCH_TEXTBOOK_WHOLE_BOOK_FILES`** — whole-book files that duplicate
   per-chapter siblings, default `full_text.md`. See *Changed* below. Set it to an
   empty value to restore the old behaviour.
-- **`server/tests/test_file_selection.py`** — the repo's first tests. Stdlib only,
-  no lancedb/ollama import, runnable as `python server/tests/test_file_selection.py`
-  or under pytest.
+- **`VAULT_SEARCH_TEXTBOOK_CHAPTER_PATTERN`** — what a chapter filename looks like,
+  and therefore the evidence that the whole-book file beside it is redundant. The
+  default matches `ch01_x.md`, `01_x.md` and `pages_0001-0030.md`. A corpus naming
+  chapters some other way matches nothing and keeps both files — duplicates, never
+  data loss.
+- **`server/tests/test_file_selection.py`** — the repo's first tests. 17 cases,
+  stdlib only, no lancedb/ollama import, runnable as
+  `python server/tests/test_file_selection.py` or under pytest.
 
 ### Changed
 
@@ -57,10 +62,23 @@ Three community reports, all reproducible, all fixed. Thanks to
   were affected.
 
   The rule is **per book, not global**: `full_text.md` is dropped only where a
-  sibling chapter file exists. A book whose whole-book file is its only copy (no
-  PDF bookmarks to split on) keeps it and stays searchable — 59 books on that same
-  corpus. This is deliberately not what `VAULT_SEARCH_TEXTBOOK_SKIP_FILES` does;
-  see the footgun below.
+  sibling file whose name looks like a chapter exists. A book whose whole-book file
+  is its only copy (no PDF bookmarks to split on) keeps it and stays searchable —
+  59 books on that same corpus. This is deliberately not what
+  `VAULT_SEARCH_TEXTBOOK_SKIP_FILES` does; see the footgun below.
+
+  "Looks like a chapter" is a name test, not "any other markdown in the folder".
+  The looser rule would let a stray `README.md` stand in for a chapter split, drop
+  the only real copy of the book, and have `orphan_cleanup()` delete its rows.
+
+- **Basename matching is now case-insensitive.** This runs on Windows and macOS,
+  where `Index.md` and `INDEX.md` are the same file. Comparing case-sensitively
+  there let a differently-cased index page pass as book content — with the looser
+  chapter rule above, that was enough to displace the book itself.
+
+- **`vault_related` no longer opens the notes table.** It answers from the
+  wiki-link graph alone and never reads that table, so a textbook-only install can
+  use it too. This completes the boundary PR #3 drew.
 
   **Upgrade note:** the first `--incremental` run after upgrading will drop the
   duplicate rows via `orphan_cleanup()`. This deletes rows, it does not re-embed —
