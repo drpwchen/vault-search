@@ -702,7 +702,13 @@ def _textbook_search_v2(arguments: dict) -> str:
 def handle_tool_call(name: str, arguments: dict) -> str:
     """Execute a tool and return the result as text."""
     try:
-        table = get_table()
+        # Opened lazily, per tool. The textbook corpus lives in its own tables
+        # (CHUNKS_TABLE / PARENTS_TABLE), so an install that indexes only
+        # textbooks has no 'vault' table at all — opening it up front made every
+        # textbook_search fail with "Table 'vault' was not found".
+        table = None
+        if name in ("vault_search", "vault_related", "vault_similar"):
+            table = get_table()
 
         if name == "vault_search":
             query = _clean(arguments["query"])
@@ -872,17 +878,20 @@ def handle_tool_call(name: str, arguments: dict) -> str:
             ))
 
         elif name == "vault_stats":
-            count = table.count_rows()
-            # Get unique files
-            all_data = table.to_pandas()
-            files = set(all_data["file"].unique())
-            folders = all_data["folder"].value_counts().to_dict()
-
-            stats = {
-                "total_chunks": count,
-                "total_files": len(files),
-                "chunks_by_folder": dict(sorted(folders.items(), key=lambda x: -x[1])),
-            }
+            stats = {}
+            # A textbook-only install has no notes index; report what exists
+            # rather than failing the whole call.
+            db0 = open_db()
+            if TABLE_NAME in db0.table_names():
+                table = get_table()
+                all_data = table.to_pandas()
+                files = set(all_data["file"].unique())
+                folders = all_data["folder"].value_counts().to_dict()
+                stats["total_chunks"] = table.count_rows()
+                stats["total_files"] = len(files)
+                stats["chunks_by_folder"] = dict(sorted(folders.items(), key=lambda x: -x[1]))
+            else:
+                stats["vault_index"] = f"not built (no '{TABLE_NAME}' table)"
 
             # Include textbook stats if available (v2 schema: chunks + parents)
             db = open_db()
