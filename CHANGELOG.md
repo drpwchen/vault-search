@@ -18,7 +18,7 @@ Three community reports, all reproducible, all fixed. Thanks to
 
 - **`pandas` was missing from `requirements.txt`, so search was broken on every
   clean install** (#1, #4). Every LanceDB read goes through `.to_pandas()` — 8 call
-  sites in `api_server.py`, 8 in `mcp_server.py`, 3 in `textbook_indexer.py` — but
+  sites in `api_server.py`, 7 in `mcp_server.py`, 3 in `textbook_indexer.py` — but
   `pyarrow` does not pull pandas in, it only shims it if already present. Indexing
   appeared to succeed and then every query died with
   `ModuleNotFoundError: No module named 'pandas'`. The failure surfaced late and
@@ -80,10 +80,11 @@ Three community reports, all reproducible, all fixed. Thanks to
   wiki-link graph alone and never reads that table, so a textbook-only install can
   use it too. This completes the boundary PR #3 drew.
 
-  **Upgrade note:** the first `--incremental` run after upgrading will drop the
-  duplicate rows via `orphan_cleanup()`. This deletes rows, it does not re-embed —
-  the surviving chapter rows are untouched. Set
-  `VAULT_SEARCH_TEXTBOOK_WHOLE_BOOK_FILES=` to keep the old behaviour.
+  **Upgrade note:** the first indexer run after upgrading drops the duplicate rows
+  via `orphan_cleanup()` — any run that is not `--book <name>`, incremental or full
+  rebuild alike. This deletes rows, it does not re-embed; the surviving chapter rows
+  are untouched. Set `VAULT_SEARCH_TEXTBOOK_WHOLE_BOOK_FILES=` to keep the old
+  behaviour.
 
 - **`VAULT_SEARCH_TEXTBOOK_SKIP_FILES` can no longer silently erase a book.** The
   skip list is global, but "is the whole-book file redundant?" is a per-book

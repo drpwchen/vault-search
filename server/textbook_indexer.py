@@ -55,8 +55,6 @@ from config import (
 # File-selection rules (which .md files of the corpus get indexed at all) live in
 # their own module so they can be tested without importing lancedb/ollama.
 from file_selection import (
-    SKIP_DIR_FRAGMENTS,
-    SKIP_FILES,
     WHOLE_BOOK_FILES,
     select_md_files,
 )
