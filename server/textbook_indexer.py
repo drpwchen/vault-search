@@ -52,6 +52,15 @@ from config import (
     GPU_LEASE_PATH,
 )
 
+# File-selection rules (which .md files of the corpus get indexed at all) live in
+# their own module so they can be tested without importing lancedb/ollama.
+from file_selection import (
+    SKIP_DIR_FRAGMENTS,
+    SKIP_FILES,
+    WHOLE_BOOK_FILES,
+    select_md_files,
+)
+
 READY_MARKER_DIR = DB_PATH  # READY.{generation_id} marker lives beside the index
 
 # Model
@@ -103,19 +112,6 @@ WATCHDOG_TRIGGER_CONSECUTIVE = 7
 class WatchdogAbort(BaseException):
     """Special exception type — bypasses normal `except Exception` so abort is hard."""
     pass
-
-# Skip patterns. SKIP_FILES is env-driven because a converter that emits both a
-# whole-book file and per-chapter files (textbook-to-note does, for any PDF with
-# bookmarks) would otherwise have every page embedded twice — doubling index time
-# and returning the same passage twice per query. Point the variable at whichever
-# of the two your corpus treats as redundant, e.g.
-#   VAULT_SEARCH_TEXTBOOK_SKIP_FILES=INDEX.md,full_text.md
-SKIP_FILES = {
-    f.strip()
-    for f in os.environ.get("VAULT_SEARCH_TEXTBOOK_SKIP_FILES", "INDEX.md").split(",")
-    if f.strip()
-}
-SKIP_DIR_FRAGMENTS = {"__pycache__"}
 
 # English abbreviation set for sentence-end heuristic (best-effort, not exhaustive —
 # overlap is the real safety net)
@@ -1214,13 +1210,23 @@ def index_textbooks(
         all_md = list(book_dir.rglob("*.md"))
     else:
         all_md = list(TEXTBOOK_PATH.rglob("*.md"))
-    md_files = [
-        f for f in sorted(all_md)
-        if f.is_file()
-        and f.name not in SKIP_FILES
-        and not any(part in SKIP_DIR_FRAGMENTS for part in f.parts)
-    ]
+    md_files, selection_notes = select_md_files(all_md)
     print(f"  found {len(md_files)} md files", flush=True)
+    if selection_notes["whole_book_skipped"]:
+        print(
+            f"  [skip] {selection_notes['whole_book_skipped']} whole-book file(s) "
+            f"({', '.join(sorted(WHOLE_BOOK_FILES))}) skipped — chapter siblings "
+            f"cover the same pages. Set VAULT_SEARCH_TEXTBOOK_WHOLE_BOOK_FILES= "
+            f"to index them anyway.",
+            flush=True,
+        )
+    for parent in selection_notes["guard_kept"]:
+        print(
+            f"  [WARN] VAULT_SEARCH_TEXTBOOK_SKIP_FILES would leave "
+            f"{parent} with nothing to index — keeping its files rather than "
+            f"dropping the book.",
+            flush=True,
+        )
 
     # Orphan cleanup (only on full / no-book run)
     if not book_filter:
