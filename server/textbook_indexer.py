@@ -104,8 +104,17 @@ class WatchdogAbort(BaseException):
     """Special exception type — bypasses normal `except Exception` so abort is hard."""
     pass
 
-# Skip patterns
-SKIP_FILES = {"INDEX.md"}
+# Skip patterns. SKIP_FILES is env-driven because a converter that emits both a
+# whole-book file and per-chapter files (textbook-to-note does, for any PDF with
+# bookmarks) would otherwise have every page embedded twice — doubling index time
+# and returning the same passage twice per query. Point the variable at whichever
+# of the two your corpus treats as redundant, e.g.
+#   VAULT_SEARCH_TEXTBOOK_SKIP_FILES=INDEX.md,full_text.md
+SKIP_FILES = {
+    f.strip()
+    for f in os.environ.get("VAULT_SEARCH_TEXTBOOK_SKIP_FILES", "INDEX.md").split(",")
+    if f.strip()
+}
 SKIP_DIR_FRAGMENTS = {"__pycache__"}
 
 # English abbreviation set for sentence-end heuristic (best-effort, not exhaustive —
