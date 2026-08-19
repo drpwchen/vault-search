@@ -136,6 +136,8 @@ python server/api_server.py                       # 服務於 http://localhost:3
 cp -r plugin "<你的VAULT>/.obsidian/plugins/vault-search-plugin"
 ```
 
+> **記憶體說明。** `api_server.py` 與 `mcp_server.py` 會在 import 時設 `OPENBLAS_NUM_THREADS=1`。numpy 內建 OpenBLAS，一 import 就依 CPU 核心數各預留一塊暫存區——在 12 執行緒機器上實測 373 MB private bytes，設成 1 之後是 19 MB——而這兩支程式本身不做線性代數（embedding 交給 Ollama，向量運算交給 LanceDB）。要拿回預設值就自己 export `OPENBLAS_NUM_THREADS`。
+
 在 Obsidian：**設定 → 第三方外掛 → 啟用「Vault Semantic Search」**。打開它的設定，確認 **API Server URL** 是 `http://localhost:3789`。側欄會出現三個圖示：🔍 搜尋、💬 對話、🔗 相關筆記。
 
 > plugin 附了一份 `data.json.example`。Obsidian 會在首次執行時寫出真正的 `data.json`；千萬不要把含 API key 的 `data.json` commit 上去。
@@ -149,6 +151,15 @@ claude mcp add vault-search -- python "/abs/path/to/server/mcp_server.py"
 ```
 
 之後 Claude Code（或任何 MCP client）就能呼叫 `vault_search`、`vault_similar`、`vault_stats`，以及（若你有索引參考語料）`textbook_search`，全部背後共用同一份地端索引、Personalized PageRank 擴展與重新排序。
+
+**如果你會同時開好幾個 session，改註冊 `mcp_thin.py`。** 每個 `mcp_server.py` session 都會自己開一份索引。在作者機器上實測：剛啟動 105 MB，跑完一次 `vault_search` 是 367 MB，跑完一次 `textbook_search`（會載入 tokenizer 與 parent map）則來到 2.2 GB——同時開幾個 session，一份索引就要吃掉好幾 GB。`mcp_thin.py` 是只用標準函式庫的轉發 client，把工具呼叫轉給正在跑的 `api_server.py`，由它獨自持有索引：
+
+```bash
+python server/api_server.py                                  # 必須是啟動狀態
+claude mcp add vault-search -- python "/abs/path/to/server/mcp_thin.py"
+```
+
+工具、參數、輸出完全相同——API server 轉進去的是 standalone MCP server 用的同一個 `handle_tool_call()`。代價是 API server 必須活著；它若掛掉，client 仍然啟動得起來（會拿上一次快取的工具 schema），工具呼叫則回一段看得懂的錯誤訊息，而不是讓整個 session 死掉。
 
 ---
 
@@ -229,13 +240,17 @@ python graph_builder.py --ner      # 選用：scispaCy/NER 實體抽取
 
 ```
 server/      indexer · scoring · ppr · api_server · mcp_server   （核心三套組）
+             mcp_thin.py                                    （省記憶體的 MCP client）
              textbook_indexer · graph_builder              （選用 add-on）
              config.py                                      （所有設定，環境變數驅動）
+             tests/                                         （純標準函式庫，不需索引）
 plugin/      main.js · manifest.json · styles.css           （Obsidian plugin）
 examples/    source_boost.example.json
 docs/images/ 截圖
 env.example  複製成 .env
 ```
+
+Obsidian plugin 的版號寫在 `plugin/manifest.json`，只有 `plugin/` 裡真的有改動時才會動——刻意不跟著 repository 的 tag 走。那個數字一升高，Obsidian 就會對使用者顯示「有更新」，所以若讓它跟著只改 server 的版本一起升，等於通知使用者去更新一個對他們毫無改變的東西。
 
 ## 作者
 

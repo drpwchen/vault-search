@@ -136,6 +136,8 @@ python server/api_server.py                       # serves http://localhost:3789
 cp -r plugin "<YOUR_VAULT>/.obsidian/plugins/vault-search-plugin"
 ```
 
+> **Memory note.** `api_server.py` and `mcp_server.py` set `OPENBLAS_NUM_THREADS=1` at import time. numpy bundles OpenBLAS, which pre-commits one scratch buffer per CPU core as soon as numpy loads — 373 MB of private bytes against 19 MB capped, measured on a 12-thread machine — and these processes do no linear algebra themselves (Ollama embeds, LanceDB does the vector math). Export your own `OPENBLAS_NUM_THREADS` if you need the default back.
+
 In Obsidian: **Settings → Community plugins → enable "Vault Semantic Search"**. Open its settings and confirm **API Server URL** is `http://localhost:3789`. Three ribbon icons appear: 🔍 Search, 💬 Chat, 🔗 Related Notes.
 
 > The plugin ships a `data.json.example`. Obsidian writes its real `data.json` on first run; never commit a `data.json` that contains an API key.
@@ -149,6 +151,15 @@ claude mcp add vault-search -- python "/abs/path/to/server/mcp_server.py"
 ```
 
 Now Claude Code (or any MCP client) can call `vault_search`, `vault_similar`, `vault_stats`, and — if you indexed a reference corpus — `textbook_search`, all backed by the same local index, Personalized-PageRank expansion, and reranking.
+
+**If you keep several sessions open, register `mcp_thin.py` instead.** Each `mcp_server.py` session opens its own copy of the index. Measured here: 105 MB at startup, 367 MB after one `vault_search`, and 2.2 GB once a `textbook_search` loads the tokenizer and parent maps — so a few concurrent sessions cost gigabytes for a single index. `mcp_thin.py` is a stdlib-only client that forwards tool calls to a running `api_server.py`, which then holds the index alone:
+
+```bash
+python server/api_server.py                                  # must be running
+claude mcp add vault-search -- python "/abs/path/to/server/mcp_thin.py"
+```
+
+Same tools, same arguments, same output — the API server dispatches to the very same `handle_tool_call()` the standalone MCP server uses. The trade-off is that the API server must be up; if it is down, the client still starts (it serves the last cached tool schema) and tool calls return a readable error instead of killing your session.
 
 ---
 
@@ -229,13 +240,17 @@ Want a cloud embedder instead of Ollama? The embedding call is isolated in `inde
 
 ```
 server/      indexer · scoring · ppr · api_server · mcp_server   (core three-piece set)
+             mcp_thin.py                                    (low-memory MCP client)
              textbook_indexer · graph_builder              (optional add-ons)
              config.py                                      (all settings, env-driven)
+             tests/                                         (stdlib, no index needed)
 plugin/      main.js · manifest.json · styles.css           (Obsidian plugin)
 examples/    source_boost.example.json
 docs/images/ screenshots
 env.example  copy to .env
 ```
+
+The Obsidian plugin carries its own version number in `plugin/manifest.json`, and it moves only when something inside `plugin/` changes — it is deliberately not kept in step with the repository tag. Obsidian offers users an update whenever that number rises, so matching it to a server-only release would advertise an update that changes nothing on their side.
 
 ## Author
 

@@ -5,8 +5,62 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Versions before 2.6.0 were not tagged. `plugin/manifest.json` carries the Obsidian
-plugin's own version (2.5.1) and is unchanged by this release — nothing in
-`plugin/` was touched.
+plugin's own version (2.5.1) and moves only when something inside `plugin/` changes,
+so it deliberately does not track these tags.
+
+## [2.7.0] — 2026-08-19 — Low-memory MCP client, OpenBLAS cap, tests in CI
+
+Nothing here changes what a search returns. It is all about what the tooling costs
+to keep running, plus the first CI that actually executes the test suite.
+
+### Added
+
+- **`server/mcp_thin.py`, a thin MCP client, and the two API endpoints it talks to
+  (`GET /api/mcp/tools`, `POST /api/mcp/call`).** Registering `mcp_server.py`
+  directly gives every MCP client session its own copy of the server, and each copy
+  opens lancedb plus, on first use, the textbook tokenizer and parent maps. Measured
+  on the author's vault, one such session holds 105 MB at startup, 367 MB after a
+  single `vault_search`, and 2.2 GB once a `textbook_search` has run — so several
+  concurrent agent sessions paid gigabytes for one index. `mcp_thin.py` uses only the
+  standard library, holds no index, and forwards each call to a running
+  `api_server.py`; the same three steps leave it at 14 MB.
+
+  (The textbook corpus is an optional add-on. Without it the per-session cost tops
+  out around 367 MB, which is still 26× the thin client.)
+
+  Behaviour is identical by construction: `/api/mcp/call` dispatches to the same
+  `handle_tool_call()` the standalone server uses, and `/api/mcp/tools` returns the
+  same `TOOLS` list. The trade-off is a dependency on the API server being up, so
+  the client degrades rather than failing: `tools/list` falls back to the last
+  cached schema (`<data dir>/mcp_tools_cache.json`) so the session still starts, and
+  a tool call returns a readable error naming the URL it could not reach.
+
+  This is opt-in. `mcp_server.py` still works exactly as before, and remains the
+  right choice for a single session with no API server running.
+
+- **A `Tests` workflow.** `.github/workflows/tests.yml` byte-compiles every module
+  under `server/` and runs `server/tests/test_file_selection.py` on Python 3.10,
+  3.11 and 3.12. The repo has had those 17 tests since 2.6.0 but nothing ran them.
+  They are plain stdlib and never touch lancedb or ollama, so CI needs no index and
+  installs no dependencies.
+
+### Changed
+
+- **`api_server.py` and `mcp_server.py` cap OpenBLAS at one thread on import.**
+  numpy bundles its own OpenBLAS, which pre-commits one scratch buffer per CPU core
+  the moment numpy is imported: 373 MB of private bytes against 19 MB capped,
+  measured on a 12-thread machine with numpy 2.5.1. Neither process does linear
+  algebra of its own — Ollama computes embeddings, LanceDB does the vector math — so
+  the buffers were pure overhead. `os.environ.setdefault` is used, so exporting your
+  own `OPENBLAS_NUM_THREADS` still wins.
+
+- **`_textbook_search_v2()` split into a thin Markdown wrapper over a new
+  `_textbook_search_v2_raw()` that returns the structured result list.** Since the
+  MCP output moved to compact Markdown, the only way to consume results
+  programmatically was to parse that Markdown back — which is why the author's own
+  smoke benchmark had been broken since the change. The missing-index case now
+  raises `TextbookIndexMissing` and the wrapper converts it to the same error JSON
+  as before, so the tool's output is byte-for-byte unchanged.
 
 ## [2.6.0] — 2026-08-16 — Clean-install fixes, textbook-only installs, whole-book deduplication
 
