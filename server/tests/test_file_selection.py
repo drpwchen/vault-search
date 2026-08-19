@@ -135,9 +135,16 @@ def test_case_variant_index_does_not_displace_the_book():
 
 
 def test_whole_book_match_is_case_insensitive():
+    """Basename matching ignores case: FULL_TEXT.md still counts as full_text.md.
+
+    The extension stays lowercase on purpose. Which files reach select_md_files()
+    is decided by the indexer's `rglob("*.md")`, which is case-sensitive on Linux
+    and case-insensitive on Windows and macOS — so a `.MD` fixture would test the
+    platform's glob, not this module.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        all_md = build(root, {"Split": ["FULL_TEXT.MD", "ch01_a.md"]})
+        all_md = build(root, {"Split": ["FULL_TEXT.md", "ch01_a.md"]})
         kept, notes = select_md_files(all_md, SKIP, WHOLE)
         assert names(kept) == {"Split/ch01_a.md"}
         assert notes["whole_book_skipped"] == 1

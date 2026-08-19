@@ -44,6 +44,14 @@ to keep running, plus the first CI that actually executes the test suite.
   They are plain stdlib and never touch lancedb or ollama, so CI needs no index and
   installs no dependencies.
 
+  Its first run earned its keep: `test_whole_book_match_is_case_insensitive` used a
+  `FULL_TEXT.MD` fixture, which `rglob("*.md")` never sees on Linux, so the test had
+  been passing on Windows for a reason that does not hold elsewhere. The fixture is
+  now `FULL_TEXT.md` — uppercase basename, lowercase extension — which is the case
+  rule `file_selection.py` actually owns. Worth knowing separately: on Linux a
+  genuinely `.MD`-suffixed file is not indexed at all, because the indexer's glob is
+  case-sensitive there. That behaviour is unchanged here.
+
 ### Changed
 
 - **`api_server.py` and `mcp_server.py` cap OpenBLAS at one thread on import.**
