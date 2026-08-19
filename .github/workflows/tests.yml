@@ -1,0 +1,30 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Syntax check every module. No dependencies are installed on purpose:
+      # compileall parses without importing, so this catches typos in files that
+      # need lancedb/ollama to actually run.
+      - name: Byte-compile all modules
+        run: python -m compileall -q server
+
+      # File-selection tests are plain stdlib and never touch lancedb or ollama,
+      # so they run on a machine that has never indexed anything.
+      - name: File selection tests
+        run: python server/tests/test_file_selection.py
