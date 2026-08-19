@@ -39,7 +39,10 @@ from indexer import (
     open_db, _escape_sql,
 )
 from graph_builder import load_graph, get_neighbors
-from mcp_server import find_relations_for_notes, handle_tool_call, TOOLS as MCP_TOOLS
+from mcp_server import (
+    find_relations_for_notes, handle_tool_call, fetch_textbook_parents,
+    TOOLS as MCP_TOOLS,
+)
 from textbook_indexer import (
     TEXTBOOK_EMBEDDING_MODEL, TEXTBOOK_QUERY_PREFIX,
     QUERY_TEMPLATE_VERSION, CHUNKING_VERSION,
@@ -182,16 +185,8 @@ def get_textbook_table():
     return _textbook_table
 
 
-# --- Textbook v2: parent_map cache ---
-_parent_map: dict[str, dict] = {}
-_parent_map_mtime: float = 0.0
-_parent_map_path = TEXTBOOK_DB_PATH / "textbook_parents.lance"
-PARENT_CACHE_COLUMNS = [
-    "parent_id", "text", "file", "book", "chapter",
-    "section_path", "section_path_raw", "page_start", "page_end",
-    "token_count", "heading_origin", "figure_ids", "has_figure_ref",
-    "chunking_version",
-]
+# --- Textbook v2: parents are read per search, never held resident ---
+# See fetch_textbook_parents() in mcp_server.py for why (2,120 MB vs ~13 ms).
 
 # Search-side parameters (mirror mcp_server.py)
 MAX_PARENT_RETURN_TOKENS = 800
@@ -200,45 +195,6 @@ MAX_TOTAL_PARENT_RETURN_TOKENS = 12000
 MAX_CHILDREN_PER_PARENT = 2
 SOFT_BOOK_DIVERSITY_THRESHOLD = 0.5
 DEFAULT_MAX_PER_BOOK = 3
-
-
-def _get_textbook_parents_table():
-    db = open_db()
-    if PARENTS_TABLE not in db.table_names():
-        return None
-    return db.open_table(PARENTS_TABLE)
-
-
-def _load_parent_map():
-    """Atomic-swap reload. Excludes vector column to avoid memory spike."""
-    global _parent_map, _parent_map_mtime
-    table = _get_textbook_parents_table()
-    if table is None:
-        return
-    df = (
-        table.search().select(PARENT_CACHE_COLUMNS).limit(10**9).to_pandas()
-    )
-    new_map: dict[str, dict] = {}
-    for _, row in df.iterrows():
-        new_map[row["parent_id"]] = row.to_dict()
-    _parent_map = new_map
-    try:
-        _parent_map_mtime = _parent_map_path.stat().st_mtime
-    except FileNotFoundError:
-        _parent_map_mtime = 0.0
-
-
-def _maybe_refresh_parent_map():
-    global _parent_map_mtime
-    try:
-        cur_mtime = _parent_map_path.stat().st_mtime
-    except FileNotFoundError:
-        return
-    if cur_mtime <= _parent_map_mtime:
-        return
-    if not list(TEXTBOOK_DB_PATH.glob("READY.*")):
-        return
-    _load_parent_map()
 
 
 def _truncate_text_to_tokens(text: str, max_tokens: int) -> tuple[str, bool, int]:
@@ -273,9 +229,9 @@ if not _search_logger.handlers:
 
 @app.post("/api/admin/reload-parents")
 def reload_parents():
-    """Force-reload parent_map cache. Use after a known reindex."""
-    _load_parent_map()
-    return {"reloaded": True, "parent_count": len(_parent_map)}
+    """Kept for callers written against the old resident parent_map. Parents are
+    read per search now, so a reindex is picked up with no reload step."""
+    return {"reloaded": False, "reason": "parents are read on demand per search"}
 
 
 def get_ollama():
@@ -397,10 +353,6 @@ def search_textbooks(
             content={"error": "Textbook v2 index not built. Run textbook_indexer.py first."},
         )
 
-    _maybe_refresh_parent_map()
-    if not _parent_map:
-        _load_parent_map()
-
     query_clean = _clean(query)
     client = get_ollama()
     response = client.embed(
@@ -498,10 +450,13 @@ def search_textbooks(
         budget_per_parent[pid] = quota
         remaining = max(0, remaining - quota)
 
+    # One round trip for exactly the parents this search returns
+    parent_rows = fetch_textbook_parents(seen_pids)
+
     formatted = []
     for r in deduped:
         pid = r["parent_id"]
-        parent_data = _parent_map.get(pid)
+        parent_data = parent_rows.get(pid)
         parent_text_full = str(parent_data.get("text", "")) if parent_data else ""
         parent_token_count = int(parent_data.get("token_count", 0) or 0) if parent_data else 0
         budget = budget_per_parent.get(pid, MAX_PARENT_RETURN_TOKENS)
@@ -1415,11 +1370,13 @@ def _extract_note_names(context: str) -> set:
 if __name__ == "__main__":
     import sys
     _this_dir = str(Path(__file__).parent)
-    # --reload: watch only api_server.py and exam_boost.json to avoid
-    # spurious restarts when other .py files (mcp_server.py, indexer.py) change
-    if "--no-reload" in sys.argv:
-        uvicorn.run(app, host=API_HOST, port=PORT, log_level="info")
-    else:
+    # Reload is OFF by default. uvicorn's reloader forks a supervisor that owns
+    # the port and a child that owns the app, so the resident server reads as a
+    # small parent hiding a large child - and the child has no readable command
+    # line and answers no HTTP, which is exactly the shape a process sweep flags
+    # as suspect. One process, one number, no stray orphan.
+    # Pass --reload while editing the server; --no-reload is still accepted.
+    if "--reload" in sys.argv:
         uvicorn.run(
             "api_server:app",
             host=API_HOST,
@@ -1429,3 +1386,5 @@ if __name__ == "__main__":
             reload_dirs=[_this_dir],
             reload_includes=["api_server.py", "scoring.py", "exam_boost.json"],
         )
+    else:
+        uvicorn.run(app, host=API_HOST, port=PORT, log_level="info")

@@ -11,8 +11,10 @@ pydantic>=2.0
 python-dotenv>=1.0
 
 # Optional: textbook/secondary-corpus indexing (parent-child chunking)
-#   needs the Qwen3 tokenizer
-transformers>=4.40
+#   needs the Qwen3 tokenizer. `tokenizers` alone, NOT transformers: transformers
+#   imports torch, which costs ~370 MB of resident memory for pure Rust tokenizing.
+tokenizers>=0.19
+huggingface-hub>=0.23   # resolves the tokenizer.json from the local HF cache
 
 # Optional: knowledge-graph entity extraction (Phase B NER)
 #   scispacy + a model, e.g.:

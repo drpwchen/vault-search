@@ -54,10 +54,12 @@ from textbook_indexer import (
 # Lazy-loaded graph
 _graph_cache = None
 
-# Parent map cache (textbook v2)
-_parent_map: dict[str, dict] = {}
-_parent_map_mtime: float = 0.0
-_parent_map_path = TEXTBOOK_DB_PATH / "textbook_parents.lance"
+# Parent lookup (textbook v2) - on-demand, NOT a resident cache.
+# Holding every parent in a dict cost 2,120 MB of private bytes on a 162k-parent
+# corpus; one `parent_id IN (...)` query for the ~20 parents a search really
+# returns costs ~13 ms warm and leaves the process near 115 MB. Reading per query
+# also removes the mtime + READY-marker reload dance: a search always sees the
+# current index, with no stale window after a reindex.
 PARENT_CACHE_COLUMNS = [
     "parent_id", "text", "file", "book", "chapter",
     "section_path", "section_path_raw", "page_start", "page_end",
@@ -164,46 +166,40 @@ def get_textbook_parents_table():
     return db.open_table(PARENTS_TABLE)
 
 
-def _load_parent_map():
-    """Build parent_map from textbook_parents table. Atomic swap (build new dict,
-    assign at end) so concurrent searches never see a half-empty map."""
-    global _parent_map, _parent_map_mtime
-    parents_table = get_textbook_parents_table()
-    if parents_table is None:
-        return
-    # CRITICAL: select metadata columns only — vector column would 4× memory spike.
-    df = (
-        parents_table.search()
-        .select(PARENT_CACHE_COLUMNS)
-        .limit(10**9)
-        .to_pandas()
+# IN-list size per query. LanceDB scans the parents table for this filter, so one
+# round trip per search is the win; splitting huge id lists keeps the SQL bounded.
+PARENT_FETCH_BATCH = 200
+
+
+def fetch_parents_by_id(table, parent_ids, columns) -> dict[str, dict]:
+    """Read just the named parents, keyed by parent_id. Empty dict on any miss."""
+    if table is None:
+        return {}
+    uniq = list(dict.fromkeys(pid for pid in parent_ids if pid))
+    if not uniq:
+        return {}
+    out: dict[str, dict] = {}
+    for i in range(0, len(uniq), PARENT_FETCH_BATCH):
+        batch = uniq[i:i + PARENT_FETCH_BATCH]
+        quoted = ",".join("'" + _escape_sql(pid) + "'" for pid in batch)
+        df = (
+            table.search()
+            .where(f"parent_id IN ({quoted})")
+            .select(columns)
+            .limit(len(batch))
+            .to_pandas()
+        )
+        for _, row in df.iterrows():
+            out[row["parent_id"]] = row.to_dict()
+    return out
+
+
+def fetch_textbook_parents(parent_ids) -> dict[str, dict]:
+    """Read the textbook parents a search actually returns. Metadata columns only -
+    pulling the vector column here would multiply the transfer for no gain."""
+    return fetch_parents_by_id(
+        get_textbook_parents_table(), parent_ids, PARENT_CACHE_COLUMNS
     )
-    new_map: dict[str, dict] = {}
-    for _, row in df.iterrows():
-        new_map[row["parent_id"]] = row.to_dict()
-    # Atomic reference swap
-    _parent_map = new_map
-    try:
-        _parent_map_mtime = _parent_map_path.stat().st_mtime
-    except FileNotFoundError:
-        _parent_map_mtime = 0.0
-
-
-def _maybe_refresh_parent_map():
-    """Reload parent_map if directory mtime newer AND a READY marker exists.
-    READY marker file pattern: lance_db/READY.{generation_id}"""
-    global _parent_map_mtime
-    try:
-        cur_mtime = _parent_map_path.stat().st_mtime
-    except FileNotFoundError:
-        return
-    if cur_mtime <= _parent_map_mtime:
-        return
-    # Check for any READY.* marker (writer wrote it after final flush)
-    ready_markers = list(TEXTBOOK_DB_PATH.glob("READY.*"))
-    if not ready_markers:
-        return  # Reindex still in progress, don't reload
-    _load_parent_map()
 
 
 def _truncate_text_to_tokens(text: str, max_tokens: int) -> tuple[str, bool, int]:
@@ -528,11 +524,6 @@ def _textbook_search_v2_raw(arguments: dict) -> list[dict]:
     if chunks_table is None:
         raise TextbookIndexMissing("Textbook v2 index not built. Run textbook_indexer.py first.")
 
-    # Refresh parent map if needed (READY marker check)
-    _maybe_refresh_parent_map()
-    if not _parent_map:
-        _load_parent_map()
-
     # Embed query with Qwen3 instruction prefix; L2 normalize
     client = ollama.Client(host=OLLAMA_HOST)
     response = client.embed(
@@ -641,11 +632,14 @@ def _textbook_search_v2_raw(arguments: dict) -> list[dict]:
         budget_per_parent[pid] = quota
         remaining_budget = max(0, remaining_budget - quota)
 
+    # One round trip for exactly the parents this search returns
+    parent_rows = fetch_textbook_parents(seen_parent_ids)
+
     # Apply budget to enrich results with parent_text
     formatted_results = []
     for r in deduped:
         pid = r["parent_id"]
-        parent_data = _parent_map.get(pid)
+        parent_data = parent_rows.get(pid)
         parent_text_full = ""
         parent_token_count = 0
         if parent_data:

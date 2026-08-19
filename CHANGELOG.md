@@ -8,25 +8,30 @@ Versions before 2.6.0 were not tagged. `plugin/manifest.json` carries the Obsidi
 plugin's own version (2.5.1) and moves only when something inside `plugin/` changes,
 so it deliberately does not track these tags.
 
-## [2.7.0] — 2026-08-19 — Low-memory MCP client, OpenBLAS cap, tests in CI
+## [2.7.0] — 2026-08-19 — Low-memory server and MCP client, OpenBLAS cap, tests in CI
 
 Nothing here changes what a search returns. It is all about what the tooling costs
 to keep running, plus the first CI that actually executes the test suite.
+
+One thread runs through it, and it is worth stating up front because it nearly sent
+this release out with the wrong conclusion. The resident `api_server` appeared to
+hold the whole index in 116 MB while a standalone `mcp_server.py` needed 2.2 GB for
+the same `textbook_search`. It did not. `uvicorn(reload=True)` forks a supervisor
+that owns the port and a child that owns the app; 116 MB was the supervisor, and the
+child beside it held 2,211 MB. Both paths ran the same code and paid the same price.
+The real cost was two resident structures neither path needed to keep.
 
 ### Added
 
 - **`server/mcp_thin.py`, a thin MCP client, and the two API endpoints it talks to
   (`GET /api/mcp/tools`, `POST /api/mcp/call`).** Registering `mcp_server.py`
   directly gives every MCP client session its own copy of the server, and each copy
-  opens lancedb plus, on first use, the textbook tokenizer and parent maps. Measured
-  on the author's vault, one such session holds 105 MB at startup, 367 MB after a
-  single `vault_search`, and 2.2 GB once a `textbook_search` has run — so several
-  concurrent agent sessions paid gigabytes for one index. `mcp_thin.py` uses only the
-  standard library, holds no index, and forwards each call to a running
-  `api_server.py`; the same three steps leave it at 14 MB.
-
-  (The textbook corpus is an optional add-on. Without it the per-session cost tops
-  out around 367 MB, which is still 26× the thin client.)
+  opens lancedb plus, on first use, the textbook tokenizer and the graph cache.
+  Measured on the author's vault after the memory fixes below, one such session holds
+  103 MB at import, 293 MB after a single `vault_search`, and 338 MB once a
+  `textbook_search` has run — before those fixes that last step reached 2.2 GB.
+  `mcp_thin.py` uses only the standard library, holds no index, and forwards each
+  call to a running `api_server.py`; the same three steps leave it at 14 MB.
 
   Behaviour is identical by construction: `/api/mcp/call` dispatches to the same
   `handle_tool_call()` the standalone server uses, and `/api/mcp/tools` returns the
@@ -54,6 +59,35 @@ to keep running, plus the first CI that actually executes the test suite.
 
 ### Changed
 
+- **Textbook parents are read per search instead of being held in a dict.**
+  `_load_parent_map()` pulled every parent row into memory at first use: 2,120 MB
+  of private bytes for a 162,864-parent corpus. A search only ever needs the ~20
+  parents it is about to return, so `fetch_textbook_parents()` asks LanceDB for
+  exactly those with one `parent_id IN (...)` query — 13–17 ms warm, against the
+  3–4 s an end-to-end search already spends embedding the query. The vault-side
+  parent map went the same way in the author's copy.
+
+  This also retires the mtime + `READY.*` marker reload dance and the
+  `POST /api/admin/reload-parents` endpoint it existed for: every search now reads
+  the current index, so a reindex has no stale window. The route still answers, so
+  old callers do not 404, but it reports that it did nothing.
+
+- **The Qwen3 tokenizer loads through `tokenizers`, not `transformers`.**
+  `AutoTokenizer` imports torch, which cost 371 MB of private bytes for what is
+  pure Rust tokenization; the `tokenizers` backend costs ~58 MB and never touches
+  torch. `get_tokenizer()` returns a thin adapter with the same `encode`/`decode`
+  shape, and prefers the local Hugging Face cache so an offline machine still
+  starts. Verified identical before the swap on 300 real parent texts plus empty,
+  whitespace, CJK, emoji and 5000-character inputs: same ids, same decode output,
+  zero mismatches. `requirements.txt` swaps `transformers` for `tokenizers` +
+  `huggingface-hub`.
+
+- **`api_server.py` no longer starts uvicorn's reloader by default.** Pass
+  `--reload` while editing the server; `--no-reload` is still accepted. Besides the
+  supervisor's own ~116 MB, the reloader's child process has no readable command
+  line and answers no HTTP, which is exactly the shape a stray-process sweep flags
+  as suspect.
+
 - **`api_server.py` and `mcp_server.py` cap OpenBLAS at one thread on import.**
   numpy bundles its own OpenBLAS, which pre-commits one scratch buffer per CPU core
   the moment numpy is imported: 373 MB of private bytes against 19 MB capped,
@@ -69,6 +103,21 @@ to keep running, plus the first CI that actually executes the test suite.
   smoke benchmark had been broken since the change. The missing-index case now
   raises `TextbookIndexMissing` and the wrapper converts it to the same error JSON
   as before, so the tool's output is byte-for-byte unchanged.
+
+### Measured
+
+One MCP session, on the author's vault (private bytes, 162,864-parent textbook
+corpus):
+
+| step | 2.6.0 | 2.7.0 |
+|---|---|---|
+| import | 105 MB | 103 MB |
+| after one `vault_search` | 367 MB | 293 MB |
+| after one `textbook_search` | 2,225 MB | 338 MB |
+| the same three steps via `mcp_thin.py` | — | 14 MB |
+
+The 20-query textbook smoke suite passes 20/20 before and after, and the 17 stdlib
+tests pass on 3.10–3.12.
 
 ## [2.6.0] — 2026-08-16 — Clean-install fixes, textbook-only installs, whole-book deduplication
 

@@ -6,12 +6,12 @@ A stdlib-only stdio MCP server that forwards every tool call to a running
 api_server instead of opening the index itself.
 
 Why: registering `mcp_server.py` directly gives every MCP client session its own
-copy of the server, and each copy loads lancedb plus — on first textbook use — the
-tokenizer and parent maps. Measured on the author's vault: 105 MB at startup,
-367 MB after one vault_search, 2.2 GB after one textbook_search. A few concurrent
-sessions therefore cost gigabytes of commit charge for a single index. This client
-stays at 14 MB across the same three steps and lets the one long-running api_server
-hold the index.
+copy of the server, and each copy loads lancedb plus - on first use - the tokenizer
+and the graph cache. Measured on the author's vault: 103 MB at import, 293 MB after
+one vault_search, 338 MB with a textbook_search on top. (Before 2.7.0 made parent
+lookup on-demand that last step reached 2.2 GB.) A few concurrent sessions still
+pay hundreds of megabytes for one index. This client stays at 14 MB across the same
+three steps and lets the one long-running api_server hold the index.
 
 Use it instead of mcp_server.py when you run the API server anyway (e.g. for the
 Obsidian plugin) or when you keep several agent sessions open at once:
