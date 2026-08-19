@@ -6,9 +6,16 @@ Usage: python api_server.py
 Default: http://127.0.0.1:3789
 """
 
+import os
+
+# numpy ships its own OpenBLAS, which pre-commits one thread scratch buffer per CPU
+# core the moment numpy is imported: 373 MB of private bytes uncapped versus 19 MB
+# capped, measured on a 12-thread machine with numpy 2.5.1. This process runs no
+# linear algebra of its own — embeddings come from Ollama, vector math from LanceDB
+# — so cap it before anything below pulls numpy in. Export your own value to override.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 import asyncio
 import json
-import os
 import re
 import subprocess
 import threading
@@ -32,7 +39,7 @@ from indexer import (
     open_db, _escape_sql,
 )
 from graph_builder import load_graph, get_neighbors
-from mcp_server import find_relations_for_notes
+from mcp_server import find_relations_for_notes, handle_tool_call, TOOLS as MCP_TOOLS
 from textbook_indexer import (
     TEXTBOOK_EMBEDDING_MODEL, TEXTBOOK_QUERY_PREFIX,
     QUERY_TEMPLATE_VERSION, CHUNKING_VERSION,
@@ -709,6 +716,34 @@ def reindex_note(req: ReindexRequest):
 
     logger.info(f"[reindex] {note_name}: {len(chunks)} chunks")
     return {"status": "ok", "note": note_name, "chunks": len(chunks)}
+
+
+# --- MCP passthrough ---------------------------------------------------------
+# Registering mcp_server.py directly means every MCP client session starts its own
+# copy, and each one loads lancedb plus — on first textbook use — the tokenizer and
+# parent maps: 105 MB at startup, 367 MB after one vault_search and 2.2 GB after one
+# textbook_search, measured here. Several concurrent sessions cost gigabytes for one
+# index.
+#
+# mcp_thin.py forwards tool calls to these two endpoints instead, so this resident
+# process is the only one holding the index and each session costs ~15 MB. The call
+# below dispatches to the very same handle_tool_call() the standalone MCP server
+# uses, so the two registration styles behave identically by construction.
+
+@app.get("/api/mcp/tools")
+def mcp_tools():
+    return {"tools": MCP_TOOLS}
+
+
+class McpCallBody(BaseModel):
+    name: str
+    arguments: dict = {}
+
+
+@app.post("/api/mcp/call")
+def mcp_call(body: McpCallBody):
+    # handle_tool_call never raises — it returns error JSON as text
+    return {"text": handle_tool_call(body.name, body.arguments)}
 
 
 @app.get("/api/health")

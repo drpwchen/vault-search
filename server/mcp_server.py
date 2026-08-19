@@ -11,10 +11,17 @@ Run as: python mcp_server.py
 Register: claude mcp add vault-search -- python "/abs/path/to/server/mcp_server.py"
 """
 
+import os
+
+# numpy ships its own OpenBLAS, which pre-commits one thread scratch buffer per CPU
+# core the moment numpy is imported: 373 MB of private bytes uncapped versus 19 MB
+# capped, measured on a 12-thread machine with numpy 2.5.1. This process runs no
+# linear algebra of its own — embeddings come from Ollama, vector math from LanceDB
+# — so cap it before anything below pulls numpy in. Export your own value to override.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 import json
 import logging
 import logging.handlers
-import os
 import sys
 import time
 import traceback
@@ -488,8 +495,28 @@ TOOLS = [
 ]
 
 
+class TextbookIndexMissing(RuntimeError):
+    """The textbook v2 index has not been built yet."""
+
+
 def _textbook_search_v2(arguments: dict) -> str:
-    """v2 parent-child semantic search with dedup, parent context, observability."""
+    """MCP entry point: run the v2 search and render it as compact Markdown.
+
+    Thin wrapper over `_textbook_search_v2_raw()` so tests and benchmarks can
+    consume structured results instead of parsing Markdown back into dicts.
+    """
+    try:
+        results = _textbook_search_v2_raw(arguments)
+    except TextbookIndexMissing as exc:
+        return json.dumps({"error": str(exc)})
+    return _clean(format_textbook_markdown(results, _clean(arguments["query"])))
+
+
+def _textbook_search_v2_raw(arguments: dict) -> list[dict]:
+    """v2 parent-child semantic search with dedup, parent context, observability.
+
+    Returns the structured result list; the Markdown rendering lives in the
+    `_textbook_search_v2()` wrapper above."""
     t0 = time.time()
     query = _clean(arguments["query"])
     n = min(arguments.get("n_results", 10), 50)
@@ -499,7 +526,7 @@ def _textbook_search_v2(arguments: dict) -> str:
 
     chunks_table = get_textbook_chunks_table()
     if chunks_table is None:
-        return json.dumps({"error": "Textbook v2 index not built. Run textbook_indexer.py first."})
+        raise TextbookIndexMissing("Textbook v2 index not built. Run textbook_indexer.py first.")
 
     # Refresh parent map if needed (READY marker check)
     _maybe_refresh_parent_map()
@@ -696,7 +723,7 @@ def _textbook_search_v2(arguments: dict) -> str:
     except Exception:
         pass  # never let logging break search
 
-    return _clean(format_textbook_markdown(formatted_results, query))
+    return formatted_results
 
 
 def handle_tool_call(name: str, arguments: dict) -> str:
