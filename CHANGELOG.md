@@ -8,6 +8,58 @@ Versions before 2.6.0 were not tagged. `plugin/manifest.json` carries the Obsidi
 plugin's own version (2.5.1) and moves only when something inside `plugin/` changes,
 so it deliberately does not track these tags.
 
+## [2.8.0] — 2026-08-21 — Unbounded disk growth fixed: LanceDB old versions are now purged
+
+If your `lance_db/` directory keeps growing even though your vault does not, this
+release is the fix — and the growth it stops is not small. LanceDB snapshots the
+whole table state on **every** write and never deletes those snapshots on its own.
+Neither indexer ever asked it to, so every incremental run left one more full
+version on disk. On the author's machine the textbook index reached 51 versions
+and 13 GB on disk for what compacts to under 4 GB, and eventually filled the drive
+to the point that indexing itself crashed with `LanceError(IO): os error 112`
+(compaction needs scratch space, so the failure shows up exactly when you can least
+afford it). A friend running this project reported the same mystery shrinkage.
+
+Two compounding causes, both fixed:
+
+### Fixed
+
+- **Both indexers now purge old table versions at the end of every run**
+  (`table.optimize(cleanup_older_than=0)`, with a `compact_files()` +
+  `cleanup_old_versions()` fallback for older lancedb). Cleanup never touches the
+  current version, so live queries are unaffected. Note that `compact_files()`
+  alone — what `textbook_indexer.py` did before — actually made things *worse*:
+  it wrote the merged fragments as yet another version while all previous
+  versions stayed on disk.
+- **`indexer.py` incremental mode batches its deletes.** It used to issue one
+  `table.delete()` per modified file, and each of those calls is a full version
+  snapshot; re-indexing after touching 200 notes meant 200 snapshots before this
+  release. Deletes now go through one `file IN (...)` predicate per 400 files
+  (matching what `textbook_indexer.py` already did), so the same run writes a
+  handful of versions instead.
+
+### Added
+
+- `server/tests/test_version_cleanup.py`: three tests covering version purge,
+  delete batching, and quote escaping in the batched predicate. They need
+  `lancedb` installed and skip themselves cleanly on the hermetic CI runners.
+  All three were mutation-verified (cleanup made a no-op, batching reverted to
+  per-file, escaping removed — each mutation is caught).
+
+### For existing installs
+
+The fix prevents future growth but does not shrink what is already on disk —
+old versions are purged by the *next* index run. Run either indexer once (even a
+no-op incremental run cleans up), or reclaim immediately without re-indexing:
+
+```python
+import lancedb
+from datetime import timedelta
+db = lancedb.connect("path/to/lance_db")
+for name in db.table_names():
+    db.open_table(name).optimize(cleanup_older_than=timedelta(0))
+```
+
 ## [2.7.0] — 2026-08-19 — Low-memory server and MCP client, OpenBLAS cap, tests in CI
 
 Nothing here changes what a search returns. It is all about what the tooling costs

@@ -13,6 +13,7 @@ import hashlib
 import json
 import re
 import time
+from datetime import timedelta
 from pathlib import Path
 
 import lancedb
@@ -325,12 +326,17 @@ def index_vault(incremental: bool = False):
             # Scan only the `file` column (avoid loading 1024-dim vectors)
             indexed = set(table.to_lance().to_table(columns=["file"]).column("file").to_pylist())
             gone = indexed - current
-            for rel_path in gone:
-                table.delete(f"file = '{_escape_sql(rel_path)}'")
             if gone:
+                _delete_files(table, sorted(gone))
                 print(f"  Pruned {len(gone)} deleted file(s) from index")
         except Exception as e:
             print(f"  Reconcile skipped: {e}")
+
+    # Purge old table versions so the DB directory doesn't grow run over run
+    try:
+        _cleanup_versions(db.open_table(TABLE_NAME))
+    except Exception:
+        pass
 
     total_chunks = _count_table(db)
     print(f"\nDone!")
@@ -349,15 +355,44 @@ def _flush_batch(db, rows: list[dict], files_to_delete: list[str], incremental: 
         db.create_table(TABLE_NAME, data=rows, schema=SCHEMA)
         return
 
-    # Delete old chunks for modified files
+    # Delete old chunks for modified files. One predicate per batch, not one
+    # delete per file: every table.delete() is a full on-disk version snapshot
+    # in LanceDB, so per-file deletes multiply disk usage.
     if incremental and files_to_delete:
-        for file_path in files_to_delete:
-            try:
-                table.delete(f"file = '{_escape_sql(file_path)}'")
-            except Exception:
-                pass
+        _delete_files(table, files_to_delete)
 
     table.add(rows)
+
+
+def _delete_files(table, rel_paths: list[str], batch: int = 400):
+    """Delete all chunks belonging to rel_paths, batched into IN() predicates."""
+    for i in range(0, len(rel_paths), batch):
+        quoted = ", ".join(f"'{_escape_sql(p)}'" for p in rel_paths[i:i + batch])
+        try:
+            table.delete(f"file IN ({quoted})")
+        except Exception:
+            pass
+
+
+def _cleanup_versions(table) -> None:
+    """Purge old on-disk table versions.
+
+    LanceDB snapshots every write (each delete/add above = one version) and
+    never removes them on its own — without this the DB directory grows
+    without bound (observed: 51 versions, 13 GB on disk for an 8 GB table).
+    """
+    # timedelta(0): purge everything but the current version. Safe because
+    # cleanup never touches the latest version, and readers check out the
+    # latest version per query.
+    try:
+        table.optimize(cleanup_older_than=timedelta(0))
+    except Exception:
+        # Older lancedb without Table.optimize()
+        try:
+            table.compact_files()
+            table.cleanup_old_versions(older_than=timedelta(0))
+        except Exception as e:
+            print(f"  Version cleanup skipped: {e}")
 
 
 def _escape_sql(s: str) -> str:

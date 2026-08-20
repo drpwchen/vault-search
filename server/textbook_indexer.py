@@ -1194,10 +1194,30 @@ def orphan_cleanup(chunks_table, parents_table, current_files: set[str]):
                 print(f"[orphan] delete failed in {label}: {e}", flush=True)
     if deleted_total > 0:
         for table in (chunks_table, parents_table):
-            try:
-                table.compact_files()
-            except Exception:
-                pass
+            compact_and_cleanup(table)
+
+
+def compact_and_cleanup(table) -> None:
+    """Compact fragments AND purge old on-disk versions.
+
+    compact_files() alone makes disk usage WORSE: it writes the merged
+    fragments as yet another version while every previous version stays on
+    disk. LanceDB never removes old versions on its own (observed: 51
+    versions, 13 GB on disk for an 8 GB table), so cleanup must follow.
+    """
+    from datetime import timedelta
+    # timedelta(0): purge everything but the current version. Safe because
+    # cleanup never touches the latest version, and readers check out the
+    # latest version per query.
+    try:
+        table.optimize(cleanup_older_than=timedelta(0))
+    except Exception:
+        # Older lancedb without Table.optimize()
+        try:
+            table.compact_files()
+            table.cleanup_old_versions(older_than=timedelta(0))
+        except Exception as e:
+            print(f"[cleanup] version cleanup skipped: {e}", flush=True)
 
 
 def index_textbooks(
@@ -1551,12 +1571,9 @@ def index_textbooks(
     save_hash_cache(hash_cache)
     save_error_log(error_log)
 
-    # Compact tables for retrieval performance
-    try:
-        chunks_table.compact_files()
-        parents_table.compact_files()
-    except Exception:
-        pass
+    # Compact for retrieval performance + purge old versions (disk growth)
+    compact_and_cleanup(chunks_table)
+    compact_and_cleanup(parents_table)
 
     # READY marker
     generation_id = sig + "_" + str(int(time.time()))
