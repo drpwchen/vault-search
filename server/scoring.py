@@ -105,6 +105,7 @@ def rerank(
     include_archived: bool = False,
     query: str = "",
     graph_relations: list[dict] | None = None,
+    rank_key: str | None = None,
 ) -> list[dict]:
     """Rerank search results by applying path and recency weights.
 
@@ -115,9 +116,17 @@ def rerank(
         results: List of result dicts with 'similarity', 'folder', and optionally 'mtime'.
         boost_recent: Whether to apply recency weighting.
         include_archived: Whether to treat 89Archived as neutral.
+        rank_key: Optional field holding a separate ranking score, e.g. the
+            Reciprocal Rank Fusion score /api/similar builds from the semantic
+            and graph rankings. When given, results are ordered by that score
+            under the same weights and the field is consumed, while 'similarity'
+            goes on reporting the weighted similarity it was given. An RRF score
+            is not a similarity — it is bounded by 2/RRF_K, about 0.03 — so a
+            client thresholding on 'similarity' must never receive one.
 
     Returns:
-        Results sorted by adjusted similarity descending.
+        Results sorted by adjusted similarity descending, or by the weighted
+        `rank_key` score when that argument is given.
     """
     now = time.time()
     for r in results:
@@ -127,8 +136,16 @@ def rerank(
         pw = get_path_weight(r.get("folder", ""), include_archived)
         rw = get_recency_weight(r.get("mtime"), now) if boost_recent else 1.0
         rlw = get_relation_weight(r.get("note", ""), query, graph_relations or [])
+        weight = pw * rw * rlw
 
-        r["similarity"] = round(raw_sim * pw * rw * rlw, 4)
+        r["similarity"] = round(raw_sim * weight, 4)
+        if rank_key is not None:
+            r["_rank_score"] = (r.pop(rank_key, 0) or 0) * weight
 
-    results.sort(key=lambda r: r["similarity"], reverse=True)
+    if rank_key is not None:
+        results.sort(key=lambda r: r["_rank_score"], reverse=True)
+        for r in results:
+            r.pop("_rank_score", None)
+    else:
+        results.sort(key=lambda r: r["similarity"], reverse=True)
     return results

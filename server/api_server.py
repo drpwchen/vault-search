@@ -247,6 +247,34 @@ def _clean(text: str) -> str:
     return text.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
 
 
+def _cosine_for_notes(table, query_embedding, notes: list[str]) -> dict[str, float]:
+    """Best cosine similarity per note, for notes outside the top-N vector hits.
+
+    Graph candidates reach /api/similar through the wiki-link graph, not through
+    the vector search, so they arrive carrying no similarity at all. A field the
+    client is expected to threshold on has to hold a real number for every row,
+    so fetch theirs with one prefiltered vector query.
+    """
+    if not notes:
+        return {}
+    quoted = ", ".join("'" + _escape_sql(n) + "'" for n in notes)
+    try:
+        df = (table.search(query_embedding).metric("cosine")
+              .where(f"note IN ({quoted})", prefilter=True)
+              .limit(min(len(notes) * 20, 2000)).to_pandas())
+    except Exception:
+        # Older lancedb without prefilter support: better a missing number than
+        # a broken endpoint. These notes fall back to 0.0 at the call site.
+        return {}
+    best: dict[str, float] = {}
+    for _, row in df.iterrows():
+        note = _clean(str(row.get("note", "")))
+        sim = round(max(0.0, 1 - float(row.get("_distance", 0))), 4)
+        if sim > best.get(note, -1.0):
+            best[note] = sim
+    return best
+
+
 # --- Search & Similar endpoints ---
 
 @app.get("/api/search")
@@ -556,6 +584,7 @@ def similar(
             "section": _clean(str(row.get("section", ""))),
             "folder": _clean(str(row.get("folder", ""))),
             "mtime": float(row["mtime"]) if row.get("mtime") is not None else None,
+            "similarity": round(max(0.0, 1 - float(row.get("_distance", 0))), 4),
         }
         sem_order.append(note)
 
@@ -565,6 +594,9 @@ def similar(
     adjacency = graph.get("adjacency", {})
     ppr_order = [n for n, _ in related_notes(adjacency, note_name, top_k=cand)] \
         if note_name in adjacency else []
+    graph_cosine = _cosine_for_notes(
+        table, query_embedding, [n for n in ppr_order if n not in sem]
+    )
 
     # Reciprocal-rank fusion of the two rankings (graph + semantic).
     RRF_K = 60
@@ -579,12 +611,15 @@ def similar(
         d = sem.get(n) or {
             "file": meta.get(n, {}).get("file", ""), "note": n, "section": "",
             "folder": meta.get(n, {}).get("folder", ""), "mtime": None,
+            "similarity": graph_cosine.get(n, 0.0),
         }
-        d["similarity"] = round(fused[n], 6)   # RRF score as base for rerank
+        d["fused"] = fused[n]
         formatted.append(d)
 
-    # Rerank applies path + recency on top of the fused score, then trim
-    formatted = rerank(formatted)[:n_results]
+    # Rerank applies path + recency on top of the fused score, then trim. The
+    # fused score only ranks: it tops out near 0.03, so reporting it as
+    # 'similarity' made every client threshold reject the whole list (issue #5).
+    formatted = rerank(formatted, rank_key="fused")[:n_results]
     for r in formatted:
         r.pop("mtime", None)
         r.pop("raw_similarity", None)

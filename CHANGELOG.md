@@ -8,6 +8,45 @@ Versions before 2.6.0 were not tagged. `plugin/manifest.json` carries the Obsidi
 plugin's own version (2.5.1) and moves only when something inside `plugin/` changes,
 so it deliberately does not track these tags.
 
+## [2.8.1] — 2026-09-05 — Related Notes showed nothing: /api/similar reported a fusion rank, not a similarity
+
+If the Obsidian plugin's Related Notes panel (🔗) has been answering "No results
+with similarity ≥ 0.50" for every note in your vault, this release is the fix.
+Nothing was wrong with your index; the number the panel filtered on was never a
+similarity in the first place. Reported by @tony860616-sudo in #5, with the root
+cause already located — thank you.
+
+### Fixed
+
+- **`/api/similar` and the `vault_similar` MCP tool now report a real cosine
+  similarity.** Both rank their candidates by Reciprocal Rank Fusion over the
+  semantic and wiki-link-graph rankings, then wrote that fusion score into the
+  `similarity` field. An RRF score is bounded by `2/RRF_K` — about 0.033, with a
+  single-ranking top hit at 0.0167 — so it could never approach the 0.5 and 0.7
+  thresholds the plugin's panel, and its chat context picker, are calibrated for.
+  Every result was filtered out no matter how close the content actually was.
+  The real cosine the LanceDB search already computed was discarded before the
+  overwrite. `similarity` now means on these two paths exactly what it means on
+  `/api/search`: cosine under the same path and recency weighting.
+- **The fusion ranking is unchanged.** `rerank()` takes a new optional
+  `rank_key` argument: it orders by that field under the same weights and
+  consumes it, leaving `similarity` to report the similarity. Graph-led results
+  still outrank closer-but-unlinked notes exactly as before — only the number
+  shown next to them changed.
+- **Graph-only candidates carry a real number too.** A note that reaches the
+  result set through the wiki-link graph never went through the vector search,
+  so it had no similarity at all. One prefiltered vector query now fetches
+  theirs. Notes with no indexed content (an attachment, an empty stub) honestly
+  report 0.00 and fall below the panel's threshold, where they belong.
+
+### Notes
+
+- `server/tests/test_similarity_reporting.py` pins all of it: the reported value
+  is the cosine, the fused ordering survives, the weights reach both numbers,
+  and the ranking field never leaks into a result. Plain stdlib, no lancedb.
+- Restart the API server to pick this up — the plugin talks to the running
+  process, not to the files on disk.
+
 ## [2.8.0] — 2026-08-21 — Unbounded disk growth fixed: LanceDB old versions are now purged
 
 If your `lance_db/` directory keeps growing even though your vault does not, this

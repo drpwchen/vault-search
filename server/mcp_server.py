@@ -245,6 +245,34 @@ def _safe_json_dumps(obj, **kwargs) -> str:
     return _clean(raw)
 
 
+def _cosine_for_notes(table, query_embedding, notes: list[str]) -> dict[str, float]:
+    """Best cosine similarity per note, for notes outside the top-N vector hits.
+
+    Graph candidates reach vault_similar through the wiki-link graph, not through
+    the vector search, so they arrive carrying no similarity at all. A field the
+    caller is expected to threshold on has to hold a real number for every row,
+    so fetch theirs with one prefiltered vector query.
+    """
+    if not notes:
+        return {}
+    quoted = ", ".join("'" + _escape_sql(n) + "'" for n in notes)
+    try:
+        df = (table.search(query_embedding).metric("cosine")
+              .where(f"note IN ({quoted})", prefilter=True)
+              .limit(min(len(notes) * 20, 2000)).to_pandas())
+    except Exception:
+        # Older lancedb without prefilter support: better a missing number than
+        # a broken tool call. These notes fall back to 0.0 at the call site.
+        return {}
+    best: dict[str, float] = {}
+    for _, row in df.iterrows():
+        note = _clean(str(row.get("note", "")))
+        sim = round(max(0.0, 1 - float(row.get("_distance", 0))), 4)
+        if sim > best.get(note, -1.0):
+            best[note] = sim
+    return best
+
+
 def format_results(results_df, include_excerpt: bool = False) -> list[dict]:
     """Format LanceDB DataFrame results into readable output."""
     formatted = []
@@ -869,6 +897,9 @@ def handle_tool_call(name: str, arguments: dict) -> str:
             adjacency = graph.get("adjacency", {})
             ppr_order = [nn for nn, _ in related_notes(adjacency, note_name, top_k=cand)] \
                 if note_name in adjacency else []
+            graph_cosine = _cosine_for_notes(
+                table, query_embedding, [nn for nn in ppr_order if nn not in sem]
+            )
 
             # Reciprocal-rank fusion of graph + semantic rankings
             RRF_K = 60
@@ -883,12 +914,16 @@ def handle_tool_call(name: str, arguments: dict) -> str:
                 d = sem.get(nn) or {
                     "note": nn, "file": meta.get(nn, {}).get("file", ""),
                     "folder": meta.get(nn, {}).get("folder", ""), "section": "", "excerpt": "",
+                    "similarity": graph_cosine.get(nn, 0.0),
                 }
-                d["similarity"] = round(fused[nn], 6)
+                d["fused"] = fused[nn]
                 deduped.append(d)
 
-            # Rerank applies path + recency on the fused score, then trim
-            deduped = rerank(deduped)[:n]
+            # Rerank applies path + recency on the fused score, then trim. The
+            # fused score only ranks: it tops out near 0.03, so reporting it as
+            # 'similarity' put a meaningless number in front of the model, and
+            # broke the same field in the plugin's panel (issue #5).
+            deduped = rerank(deduped, rank_key="fused")[:n]
 
             # Remove internal mtime field from output
             for r in deduped:
