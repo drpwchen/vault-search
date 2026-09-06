@@ -8,6 +8,76 @@ Versions before 2.6.0 were not tagged. `plugin/manifest.json` carries the Obsidi
 plugin's own version (2.5.1) and moves only when something inside `plugin/` changes,
 so it deliberately does not track these tags.
 
+## [2.9.0] — 2026-09-06 — Parent-child vault index, one GPU lease, no hardcoded folders
+
+Vault search gets the retrieval architecture the textbook corpus has had for
+months: every note is split into small child chunks for a precise vector hit,
+plus subsection-sized parents that are what you actually get back. It ships as a
+**second pair of tables**, so the existing index keeps serving until you decide
+to switch — create `~/.vault-search/vault_v2.enabled` to read v2, delete it to go
+back, no restart either way.
+
+This release also removes the last folder names baked into the code. Ranking
+weights, the archive folder, derivative-note exclusion, entity-extraction
+priority and both query templates now come from the environment, so the defaults
+suit any vault rather than the author's.
+
+### Added
+
+- **`server/vault_indexer_v2.py`** — parent-child indexing for the vault, with
+  incremental hashing, a generation marker and error accounting. Its embedding
+  model is its own knob (`VAULT_SEARCH_V2_MODEL`): a vault-only install never has
+  to configure a textbook corpus to use v2.
+- **Dual-track retrieval.** `vault_search`, `/api/search` and the chat context
+  picker read v2 when the flag file is present and fall back to v1 when the v2
+  index is missing or broken — and the fallback is RECORDED
+  (`index_version`, `v2_fallback_reason`) in `vault_search_log.jsonl`, because a
+  silent downgrade to the older index looks exactly like "search got worse for no
+  reason".
+- **`server/gpu_lease_client.py`** — one `GpuLease` class shared by both
+  indexers: acquire before any GPU work, heartbeat while a long run makes
+  progress, and yield the card between files when another job is queued.
+  Unset `VAULT_SEARCH_GPU_LEASE` (the default) makes every call a no-op — no
+  subprocess is ever spawned on the open-source path.
+
+### Changed
+
+- **Ranking is configuration, not code.** `VAULT_SEARCH_PATH_WEIGHTS`,
+  `VAULT_SEARCH_ARCHIVE_FOLDER`, `VAULT_SEARCH_EXCLUDE_PATTERNS` and
+  `VAULT_SEARCH_ENTITY_PRIORITY_FOLDERS` replace folder names that were written
+  into `scoring.py`, `mcp_server.py` and `graph_builder.py`. All default to
+  empty: every folder weighted equally, nothing excluded, no folder favoured.
+- **Query templates are configurable and self-identifying.** The logged
+  `query_template_version` is now the template's name plus a short hash of the
+  prefix itself, so a log line can never name one template while a different
+  prefix is in use. The template is deliberately NOT part of the indexing
+  signature — it only shapes queries, never the stored vectors, so editing it
+  no longer forces a full re-index.
+- **One excerpt budget.** `vault_similar` quoted 500 characters of a note where
+  `vault_search` quoted 800, because one path built its rows through
+  `format_results()` and the other inline. Both now use `EXCERPT_CHARS = 800`.
+
+### Fixed
+
+- **`_search_vault_context` embedded its query with the wrong model.** The chat
+  context picker built a bge-m3 vector and searched the qwen3 textbook table with
+  it. Both are 1024-dimensional, so nothing raised — the results were just
+  quietly worse.
+- **The entities block was ordered by `PYTHONHASHSEED`.** It was built by
+  iterating a `set` of note names, and with its 15-entry cap that meant two
+  processes on the same index answered one query with a different SUBSET of
+  entities. It now follows result rank.
+
+### Notes
+
+- Tests never touch a real data directory any more. `config.py` resolves
+  `DATA_DIR` at import time, so a module setting the env var in its own header
+  loses to whichever test file imported config first — and a test that deletes
+  the v2 flag file then deletes the one in `~/.vault-search`. The new
+  `server/tests/conftest.py` sets it before any test module is imported, and the
+  flag-file tests override the module attribute outright.
+- 53 tests, no network and no lancedb required for most of them.
+
 ## [2.8.1] — 2026-09-05 — Related Notes showed nothing: /api/similar reported a fusion rank, not a similarity
 
 If the Obsidian plugin's Related Notes panel (🔗) has been answering "No results

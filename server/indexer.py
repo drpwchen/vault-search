@@ -28,6 +28,11 @@ from config import (
 
 TABLE_NAME = "vault"
 
+# How long a superseded table version is kept before cleanup removes it. Not
+# zero: readers open the table per query, so a search that started moments ago
+# is still holding the version this run just replaced.
+VERSION_RETENTION = timedelta(minutes=5)
+
 # BGE-M3: no instruction prefix needed (handled internally by the model)
 QUERY_PREFIX = ""
 DOC_PREFIX = ""
@@ -374,23 +379,26 @@ def _delete_files(table, rel_paths: list[str], batch: int = 400):
             pass
 
 
-def _cleanup_versions(table) -> None:
+def _cleanup_versions(table, older_than: timedelta = VERSION_RETENTION) -> None:
     """Purge old on-disk table versions.
 
     LanceDB snapshots every write (each delete/add above = one version) and
     never removes them on its own — without this the DB directory grows
     without bound (observed: 51 versions, 13 GB on disk for an 8 GB table).
+
+    `older_than` is the retention window; pass timedelta(0) to purge back to
+    the current version (tests do this to prove the mechanism works).
     """
-    # timedelta(0): purge everything but the current version. Safe because
-    # cleanup never touches the latest version, and readers check out the
-    # latest version per query.
+    # Keep a short retention window instead of purging back to the current
+    # version: a search re-opens the table per query, so a reader that started
+    # moments ago still holds a version this run has just superseded.
     try:
-        table.optimize(cleanup_older_than=timedelta(0))
+        table.optimize(cleanup_older_than=older_than, delete_unverified=True)
     except Exception:
         # Older lancedb without Table.optimize()
         try:
             table.compact_files()
-            table.cleanup_old_versions(older_than=timedelta(0))
+            table.cleanup_old_versions(older_than=older_than)
         except Exception as e:
             print(f"  Version cleanup skipped: {e}")
 

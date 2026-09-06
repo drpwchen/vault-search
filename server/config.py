@@ -11,6 +11,7 @@ installed) or export them in your shell. The ONLY value you must set is VAULT_PA
 See `.env.example` in the repo root for the full list.
 """
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -34,6 +35,19 @@ def _path(env: str, default: str | None) -> Path | None:
 def _csv(env: str, default: str) -> list[str]:
     raw = os.environ.get(env, default)
     return [s.strip() for s in raw.split(",") if s.strip()]
+
+
+def template_version(name: str, prefix: str) -> str:
+    """Build the query-template identifier written to the search logs.
+
+    The name alone is a promise nothing enforces: rename the template without
+    editing the prefix (or edit the prefix and forget the name) and every log
+    line afterwards attributes results to a template that was never used.
+    Appending a short hash of the prefix itself makes that impossible — the
+    name stays readable, the hash is what actually identifies the text.
+    """
+    digest = hashlib.sha256(prefix.encode("utf-8")).hexdigest()[:8]
+    return f"{name}-{digest}"
 
 
 def _json_file(env: str, default: str | None) -> dict:
@@ -82,6 +96,48 @@ HASH_CACHE_PATH = _path("VAULT_SEARCH_HASH_CACHE", str(DATA_DIR / "file_hashes.j
 # Shared observability log.
 SEARCH_LOG_PATH = _path("VAULT_SEARCH_LOG_PATH", str(DATA_DIR / "search_log.jsonl"))
 
+# --- Vault v2 index (parent-child chunking) ----------------------------------
+# v2 splits every note into small child chunks (precise vector hit) plus
+# subsection-sized parents (the context actually returned). It is a separate pair
+# of tables, so v1 and v2 can coexist and be compared before you commit to one.
+#
+# Retrieval reads v2 only when this flag FILE exists — create or delete it to
+# switch paths without restarting the server:
+#   touch ~/.vault-search/vault_v2.enabled
+VAULT_V2_FLAG = _path("VAULT_SEARCH_V2_FLAG", str(DATA_DIR / "vault_v2.enabled"))
+
+# v2 embedding model. Defaults to the textbook model because the parent-child
+# architecture came from there, but it is its own knob: a vault-only install
+# never has to configure a textbook corpus to use v2.
+VAULT_V2_EMBEDDING_MODEL = os.environ.get(
+    "VAULT_SEARCH_V2_MODEL",
+    os.environ.get("VAULT_SEARCH_TEXTBOOK_MODEL", "qwen3-embedding:0.6b"),
+)
+
+VAULT_V2_HASH_CACHE = _path("VAULT_SEARCH_V2_HASH", str(DATA_DIR / "vault_v2_hashes.json"))
+VAULT_V2_ERROR_LOG = _path("VAULT_SEARCH_V2_ERRORS", str(DATA_DIR / "vault_v2_index_errors.json"))
+
+# Observability log for vault searches (the textbook side has its own).
+VAULT_SEARCH_LOG_PATH = _path(
+    "VAULT_SEARCH_VAULT_LOG_PATH", str(DATA_DIR / "vault_search_log.jsonl")
+)
+
+# Instruction prefix prepended to every vault QUERY before embedding (Qwen3
+# instruct format). Documents are embedded WITHOUT it, so changing this changes
+# only how queries are phrased — never the stored vectors.
+VAULT_QUERY_PREFIX = os.environ.get(
+    "VAULT_SEARCH_V2_QUERY_PREFIX",
+    "Instruct: Given a query, retrieve the most relevant passages "
+    "from the user's personal notes.\nQuery: ",
+)
+# Human-readable name for the query template above, recorded in the search log.
+# See `query_template_version()` in vault_indexer_v2.py: the logged value is this
+# name plus a short hash of the prefix, so the name can never claim one template
+# while a different prefix is actually in use.
+VAULT_QUERY_TEMPLATE_NAME = os.environ.get(
+    "VAULT_SEARCH_V2_TEMPLATE_VERSION", "qwen3-vault-v1"
+)
+
 # --- API server -------------------------------------------------------------
 API_HOST = os.environ.get("VAULT_SEARCH_API_HOST", "0.0.0.0")
 API_PORT = int(os.environ.get("VAULT_SEARCH_API_PORT", "3789"))
@@ -110,7 +166,7 @@ CHAT_HISTORY_FOLDER = os.environ.get("VAULT_SEARCH_CHAT_HISTORY_FOLDER", "VaultC
 # --- Reranking weights ------------------------------------------------------
 # Folder -> score multiplier. Boost the folders you trust most; demote archives.
 # Default is empty (every folder weighted equally). Example:
-#   VAULT_SEARCH_PATH_WEIGHTS='{"52Medicine":1.2,"Archive":0.8}'
+#   VAULT_SEARCH_PATH_WEIGHTS='{"Reference":1.2,"Archive":0.8}'
 PATH_WEIGHTS = (
     json.loads(os.environ["VAULT_SEARCH_PATH_WEIGHTS"])
     if os.environ.get("VAULT_SEARCH_PATH_WEIGHTS")
@@ -131,6 +187,11 @@ GRAPH_PATH = _path("VAULT_SEARCH_GRAPH_PATH", str(DATA_DIR / "knowledge_graph.js
 EXTRACT_PROGRESS_PATH = _path("VAULT_SEARCH_EXTRACT_PROGRESS", str(DATA_DIR / "extract_progress.json"))
 # Optional dir of extra markdown (e.g. a glossary) used to canonicalize NER entities.
 ENTITY_CANON_DIR = _path("VAULT_SEARCH_ENTITY_CANON_DIR", None)
+# Folders whose notes get entity extraction FIRST. Extraction is slow and often
+# time-boxed, so this decides what gets covered when a run cannot finish
+# everything. Empty (the default) = no folder is favoured.
+# Example: VAULT_SEARCH_ENTITY_PRIORITY_FOLDERS="Reference,Projects"
+ENTITY_PRIORITY_FOLDERS = set(_csv("VAULT_SEARCH_ENTITY_PRIORITY_FOLDERS", ""))
 
 # --- Textbook corpus (optional add-on) --------------------------------------
 # A second corpus of long-form reference docs, indexed separately with its own model.
@@ -142,5 +203,29 @@ TEXTBOOK_ERROR_LOG = _path("VAULT_SEARCH_TEXTBOOK_ERRORS", str(DATA_DIR / "textb
 TEXTBOOK_ERROR_ARCHIVE = _path("VAULT_SEARCH_TEXTBOOK_ERRORS_ARCHIVE", str(DATA_DIR / "textbook_index_errors.archive.json"))
 # Per-source ranking boost for the textbook corpus (see examples/source_boost.example.json).
 SOURCE_BOOST_PATH = _path("VAULT_SEARCH_SOURCE_BOOST", None)
-# Optional helper script that pauses a competing GPU job during heavy indexing.
+# --- GPU lease (optional) ----------------------------------------------------
+# Path to a machine-wide lease script that serializes GPU jobs. Unset (the
+# default) means indexing just runs — right on a machine that has the GPU to
+# itself. See server/gpu_lease_client.py for the interface it must expose.
 GPU_LEASE_PATH = _path("VAULT_SEARCH_GPU_LEASE", None)
+
+# Names this project registers under, so `<script> status` shows which indexer
+# holds the card. One per indexer: they are separate jobs and must not be able
+# to queue behind themselves.
+GPU_LEASE_NAME_TEXTBOOK = os.environ.get(
+    "VAULT_SEARCH_GPU_LEASE_NAME_TEXTBOOK", "vault_search_textbook_index")
+GPU_LEASE_NAME_VAULT = os.environ.get(
+    "VAULT_SEARCH_GPU_LEASE_NAME_VAULT", "vault_search_vault_index")
+
+# How long to wait for a turn before giving up (default 6 h: a full index run
+# ahead of us legitimately takes hours).
+GPU_LEASE_ACQUIRE_TIMEOUT = float(
+    os.environ.get("VAULT_SEARCH_GPU_LEASE_TIMEOUT", "21600"))
+# Minimum time to hold the lease before yielding, so a burst of queued jobs
+# cannot make the indexer thrash release/re-acquire without making progress.
+GPU_LEASE_MIN_HOLD = float(os.environ.get("VAULT_SEARCH_GPU_LEASE_MIN_HOLD", "180"))
+# Optional: the lease script's state directory. Knowing it lets the yield check
+# peek at the queue with a directory listing instead of spawning a subprocess
+# once per file. Without it the check still works, just time-throttled.
+GPU_LEASE_STATE_DIR = _path("VAULT_SEARCH_GPU_LEASE_STATE", None)
+GPU_LEASE_QUEUE_DIR = (GPU_LEASE_STATE_DIR / "queue") if GPU_LEASE_STATE_DIR else None

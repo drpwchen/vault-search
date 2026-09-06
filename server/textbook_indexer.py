@@ -9,7 +9,7 @@ Both have L2-normalized vectors; cosine distance.
 Usage:
     python textbook_indexer.py                          # full rebuild (drops & rebuilds)
     python textbook_indexer.py --incremental            # only changed files (mtime + hash)
-    python textbook_indexer.py --book Braddom_7e        # one book, preserves others
+    python textbook_indexer.py --book SomeBook_2e       # one book, preserves others
     python textbook_indexer.py --retry-failed           # retry status=pending error log entries
     python textbook_indexer.py --retry-permanent        # retry status=permanent (manual triage)
     python textbook_indexer.py --reset-error-status ID  # reset one entry to pending
@@ -25,11 +25,10 @@ import hashlib
 import json
 import math
 import re
-import subprocess
 import sys
 import time
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -50,6 +49,22 @@ from config import (
     TEXTBOOK_ERROR_LOG as ERROR_LOG_PATH,
     TEXTBOOK_ERROR_ARCHIVE as ERROR_LOG_ARCHIVE_PATH,
     GPU_LEASE_PATH,
+    GPU_LEASE_NAME_TEXTBOOK,
+    GPU_LEASE_ACQUIRE_TIMEOUT,
+    GPU_LEASE_MIN_HOLD,
+    GPU_LEASE_QUEUE_DIR,
+    template_version,
+)
+from gpu_lease_client import GpuLease, acquire_or_exit
+
+# This run's turn at the GPU. A no-op unless VAULT_SEARCH_GPU_LEASE points at a
+# lease script; see server/gpu_lease_client.py.
+_LEASE = GpuLease(
+    GPU_LEASE_NAME_TEXTBOOK,
+    script=GPU_LEASE_PATH,
+    queue_dir=GPU_LEASE_QUEUE_DIR,
+    acquire_timeout=GPU_LEASE_ACQUIRE_TIMEOUT,
+    min_hold_s=GPU_LEASE_MIN_HOLD,
 )
 
 # File-selection rules (which .md files of the corpus get indexed at all) live in
@@ -63,13 +78,17 @@ READY_MARKER_DIR = DB_PATH  # READY.{generation_id} marker lives beside the inde
 
 # Model
 EMBEDDING_DIM = 1024
-# Instruction prefix prepended to every query before embedding (Qwen3 instruct format).
-# Customize for your domain (the default is generic). Bump QUERY_TEMPLATE_VERSION when changed.
+# Instruction prefix prepended to every QUERY before embedding (Qwen3 instruct
+# format). Customize for your domain (the default is generic). Documents are
+# embedded WITHOUT it — see compute_indexing_signature() for why that matters.
 TEXTBOOK_QUERY_PREFIX = os.environ.get(
     "VAULT_SEARCH_TEXTBOOK_QUERY_PREFIX",
     "Instruct: Given a query, retrieve the most relevant reference passages.\nQuery: ",
 )
-QUERY_TEMPLATE_VERSION = os.environ.get("VAULT_SEARCH_TEXTBOOK_TEMPLATE_VERSION", "qwen3-generic-v1")
+QUERY_TEMPLATE_NAME = os.environ.get("VAULT_SEARCH_TEXTBOOK_TEMPLATE_VERSION", "qwen3-generic-v1")
+# Name + a hash of the prefix itself, so the logged identifier cannot name one
+# template while a different prefix is in use.
+QUERY_TEMPLATE_VERSION = template_version(QUERY_TEMPLATE_NAME, TEXTBOOK_QUERY_PREFIX)
 OLLAMA_NUM_CTX = 4096  # explicit; default 2048 silently truncates parents > 2K
 
 # Versions
@@ -95,6 +114,14 @@ BATCH_SIZE = 64  # reduced 300→64 (2026-06-05): on the 8GB GPU under sustained
 PARENT_BATCH_SIZE = 64  # same rationale as BATCH_SIZE
 FLUSH_EVERY_FILES = 50
 HASH_SAVE_EVERY_FILES = 100
+# Version-bloat control. Each per-file delete()+add() creates a table version
+# whose superseded data files persist until explicitly cleaned. Compacting only
+# at the end of a run lets thousands accumulate mid-run (observed on a large
+# corpus: 9300+ versions, ~123 GB of dead parquet). Prune periodically instead,
+# with a wide window mid-run (readers are active) and a tighter one at the end.
+PRUNE_EVERY_FILES = 2000
+PRUNE_WINDOW_MID = timedelta(minutes=30)
+PRUNE_WINDOW_FINAL = timedelta(minutes=5)
 
 # Latency watchdog (Gemini r6 #4)
 # Tuning history:
@@ -252,20 +279,51 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def compute_indexing_signature() -> str:
-    payload = "|".join([
+def _signature_parts() -> list[str]:
+    """The settings that actually determine what is stored in the tables."""
+    return [
         ALGORITHM_VERSION,
         CHUNKING_VERSION,
         TEXTBOOK_EMBEDDING_MODEL,
-        QUERY_TEMPLATE_VERSION,
         f"CHILD_TARGET={CHILD_TARGET_TOKENS}",
         f"CHILD_OVERLAP={CHILD_OVERLAP_TOKENS}",
         f"PARENT_MAX={PARENT_MAX_TOKENS}",
         f"PARENT_MIN={PARENT_MIN_TOKENS}",
         f"TABLE_MAX={TABLE_HARD_MAX_TOKENS}",
         f"MIN_EMBED={MIN_EMBED_TOKENS}",
-    ])
-    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+    ]
+
+
+def compute_indexing_signature() -> str:
+    """Fingerprint of the settings the stored vectors depend on.
+
+    A mismatch means the corpus on disk was built under different rules and has
+    to be rebuilt, so everything in here must be something that actually changes
+    what gets written. The query prefix is deliberately NOT in here: documents
+    are embedded without it (see embed_texts), so changing it changes queries
+    only — a "rebuild" would re-emit byte-identical vectors. It used to be part
+    of this payload, which turned a harmless prefix edit into a hard stop on the
+    next incremental run. It is recorded in the search log instead.
+    """
+    return hashlib.sha256("|".join(_signature_parts()).encode()).hexdigest()[:16]
+
+
+def legacy_indexing_signature() -> str:
+    """The pre-2.9.0 signature, which included the query template name.
+
+    Kept so a corpus built by an older version is recognized as compatible
+    instead of demanding a pointless full rebuild on first run after upgrading.
+    Reproduces the old payload exactly: the bare template NAME, not the
+    name+hash identifier that goes to the logs today.
+    """
+    parts = _signature_parts()
+    parts.insert(3, QUERY_TEMPLATE_NAME)  # sat right after the model name
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
+
+
+def compatible_signatures() -> set[str]:
+    """Signatures an existing corpus may legitimately carry."""
+    return {compute_indexing_signature(), legacy_indexing_signature()}
 
 
 # Figure ID regexes
@@ -1197,25 +1255,30 @@ def orphan_cleanup(chunks_table, parents_table, current_files: set[str]):
             compact_and_cleanup(table)
 
 
-def compact_and_cleanup(table) -> None:
+def compact_and_cleanup(table, label: str = "", older_than: timedelta = PRUNE_WINDOW_FINAL) -> None:
     """Compact fragments AND purge old on-disk versions.
 
     compact_files() alone makes disk usage WORSE: it writes the merged
     fragments as yet another version while every previous version stays on
     disk. LanceDB never removes old versions on its own (observed: 51
     versions, 13 GB on disk for an 8 GB table), so cleanup must follow.
+
+    `older_than` keeps a retention window rather than purging back to the
+    current version: a search re-opens the table per query, so a reader that
+    started moments ago is still holding a version this run has superseded.
     """
-    from datetime import timedelta
-    # timedelta(0): purge everything but the current version. Safe because
-    # cleanup never touches the latest version, and readers check out the
-    # latest version per query.
     try:
-        table.optimize(cleanup_older_than=timedelta(0))
+        table.optimize(cleanup_older_than=older_than, delete_unverified=True)
+        try:
+            print(f"[optimize] {label or 'table'}: pruned (older_than={older_than}); "
+                  f"{len(table.list_versions())} version(s) remain", flush=True)
+        except Exception:
+            pass
     except Exception:
         # Older lancedb without Table.optimize()
         try:
             table.compact_files()
-            table.cleanup_old_versions(older_than=timedelta(0))
+            table.cleanup_old_versions(older_than=older_than)
         except Exception as e:
             print(f"[cleanup] version cleanup skipped: {e}", flush=True)
 
@@ -1242,7 +1305,14 @@ def index_textbooks(
             sample = chunks_table.search().select(["indexing_signature"]).limit(1).to_pandas()
             if not sample.empty:
                 old_sig = sample["indexing_signature"].iloc[0]
-                if old_sig != sig:
+                if old_sig == legacy_indexing_signature() and old_sig != sig:
+                    print(
+                        f"[migrate] corpus carries the pre-2.9.0 signature ({old_sig}); "
+                        f"the settings behind it are unchanged, so it stays valid. "
+                        f"New rows are stamped {sig}.",
+                        flush=True,
+                    )
+                elif old_sig not in compatible_signatures():
                     print(
                         f"[WARN] indexing_signature mismatch (old={old_sig}, new={sig}). "
                         f"Re-run without --incremental for full rebuild, "
@@ -1548,9 +1618,37 @@ def index_textbooks(
                 f"rate={rate:.2f} files/s eta={eta/60:.0f} min",
                 flush=True,
             )
+            # A run can hold the lease for many hours; without this a stale-lease
+            # reaper would evict us mid-run and let another job collide with the
+            # embedder.
+            _LEASE.heartbeat()
         if files_processed % HASH_SAVE_EVERY_FILES == 0:
             save_hash_cache(hash_cache)
             save_error_log(error_log)
+
+        # Periodic version pruning — bounds the version count (and the dead files
+        # behind it) DURING a long run instead of only at the end.
+        if files_processed % PRUNE_EVERY_FILES == 0:
+            compact_and_cleanup(chunks_table, CHUNKS_TABLE, PRUNE_WINDOW_MID)
+            compact_and_cleanup(parents_table, PARENTS_TABLE, PRUNE_WINDOW_MID)
+
+        # Cooperative yield — checked once per file (the check itself is cheap).
+        # Short per-file jobs queued behind this hours-long run would otherwise
+        # wait for all of it. Flush EVERYTHING first: after the yield another
+        # process owns the card.
+        if _LEASE.yield_wanted():
+            _flush_parents()
+            _flush_children()
+            _finalize_completed_files()
+            if pending_chunk_records:
+                chunks_table.add(pending_chunk_records)
+                pending_chunk_records = []
+            if pending_parent_records:
+                parents_table.add(pending_parent_records)
+                pending_parent_records = []
+            save_hash_cache(hash_cache)
+            save_error_log(error_log)
+            _LEASE.yield_now(unload_model=TEXTBOOK_EMBEDDING_MODEL)
 
     # Final embed flush
     _flush_parents()
@@ -1572,8 +1670,8 @@ def index_textbooks(
     save_error_log(error_log)
 
     # Compact for retrieval performance + purge old versions (disk growth)
-    compact_and_cleanup(chunks_table)
-    compact_and_cleanup(parents_table)
+    compact_and_cleanup(chunks_table, CHUNKS_TABLE)
+    compact_and_cleanup(parents_table, PARENTS_TABLE)
 
     # READY marker
     generation_id = sig + "_" + str(int(time.time()))
@@ -1590,8 +1688,8 @@ def index_textbooks(
         # contention crashing the Ollama runner. Re-run with the GPU free to recover them:
         # incremental skips finished files and reprocesses only the ones that had failures.
         print(f"  ⚠ {embed_failed} chunks were dropped (NOT indexed) — usually shared-GPU contention.", flush=True)
-        print(f"    Recover: ensure the lecture batch is paused (auto unless --no-gpu-lease), "
-              f"then re-run `textbook_indexer.py --incremental`.", flush=True)
+        print("    Recover: make sure nothing else is using the GPU, then re-run "
+              "`textbook_indexer.py --incremental`.", flush=True)
 
 
 # =============================================================================
@@ -1626,33 +1724,6 @@ def cmd_reset(eid: str):
 # CLI
 # =============================================================================
 
-def _gpu_lease(action: str) -> tuple[bool, str]:
-    """Run `gpu_lease.py <action>` as a subprocess (acquire/release/status). Best-effort:
-    a missing script or non-zero exit is reported, never fatal. Returns (ok, stdout)."""
-    if not GPU_LEASE_PATH or not GPU_LEASE_PATH.exists():
-        return False, ""
-    try:
-        # acquire may block until the runner exits and frees VRAM (lease default ~40 min)
-        r = subprocess.run(
-            [sys.executable, str(GPU_LEASE_PATH), action],
-            capture_output=True, text=True, timeout=2700,
-        )
-        return r.returncode == 0, (r.stdout or "")
-    except Exception as e:
-        return False, f"error: {e}"
-
-
-def _gpu_lease_state() -> str:
-    """Current lecture-batch lease state: RUNNING / PAUSED / STOPPED / UNKNOWN."""
-    ok, out = _gpu_lease("status")
-    if not ok:
-        return "UNKNOWN"
-    for token in ("RUNNING", "PAUSED", "STOPPED"):
-        if token in out:
-            return token
-    return "UNKNOWN"
-
-
 def main():
     p = argparse.ArgumentParser(description="Textbook indexer v2 (parent-child + Qwen3)")
     p.add_argument("--incremental", action="store_true", help="Only changed files (mtime + hash)")
@@ -1662,8 +1733,9 @@ def main():
     p.add_argument("--retry-permanent", action="store_true", help="Retry status=permanent entries")
     p.add_argument("--reset-error-status", metavar="ID", help="Reset one error entry to pending")
     p.add_argument("--no-gpu-lease", action="store_true",
-                   help="Do not pause a competing GPU job (configured via VAULT_SEARCH_GPU_LEASE) "
-                        "even if it is running (default: auto-pause to avoid shared-GPU OOM that drops chunks)")
+                   help="Skip the GPU lease entirely (DANGEROUS: another GPU job can then "
+                        "collide with the embedder and silently drop chunks; only for "
+                        "machines with no lease script configured)")
     args = p.parse_args()
 
     if args.retry_failed:
@@ -1673,16 +1745,15 @@ def main():
     elif args.reset_error_status:
         cmd_reset(args.reset_error_status)
     else:
-        # State-aware GPU lease: only borrow (pause→resume) the lecture batch if it is
-        # actually RUNNING. If it is already PAUSED/STOPPED the GPU is free, so we leave the
-        # batch untouched — never relaunch a batch the user deliberately stopped.
-        managed_lease = False
+        # The indexer is an ordinary lease taker: ALWAYS acquire before touching
+        # the GPU, and refuse to run if the lease cannot be had. (The older
+        # "acquire only if another job is RUNNING" check made it a squatter
+        # whenever it started in the gap right after another job released, and
+        # the old "failed (continuing)" fallback ran it unregistered on timeout.
+        # Both starve whatever is queued.) With no lease script configured this
+        # is a no-op and indexing simply runs.
         if not args.no_gpu_lease:
-            if _gpu_lease_state() == "RUNNING":
-                ok, out = _gpu_lease("acquire")
-                managed_lease = ok
-                print(f"[gpu-lease] acquire: {'ok — lecture batch paused' if ok else 'failed (continuing)'} "
-                      f"{out.strip()[-160:]}", flush=True)
+            acquire_or_exit(_LEASE)
         try:
             index_textbooks(
                 incremental=args.incremental,
@@ -1690,9 +1761,9 @@ def main():
                 force=args.force,
             )
         finally:
-            if managed_lease:
-                ok, out = _gpu_lease("release")
-                print(f"[gpu-lease] release: {'ok — lecture batch resumed' if ok else 'FAILED — check gpu_lease status'} "
+            if _LEASE.held:
+                ok, out = _LEASE.release()
+                print(f"[gpu-lease] release: {'ok' if ok else 'FAILED — check the lease script'} "
                       f"{out.strip()[-160:]}", flush=True)
 
 

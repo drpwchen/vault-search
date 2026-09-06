@@ -115,7 +115,7 @@ def rerank(
     Args:
         results: List of result dicts with 'similarity', 'folder', and optionally 'mtime'.
         boost_recent: Whether to apply recency weighting.
-        include_archived: Whether to treat 89Archived as neutral.
+        include_archived: Whether to treat the configured archive folder as neutral.
         rank_key: Optional field holding a separate ranking score, e.g. the
             Reciprocal Rank Fusion score /api/similar builds from the semantic
             and graph rankings. When given, results are ordered by that score

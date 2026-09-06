@@ -27,6 +27,7 @@ from pathlib import Path
 from config import (
     VAULT_PATH, GRAPH_PATH, EXTRACT_PROGRESS_PATH, SKIP_FOLDERS,
     OLLAMA_HOST, OLLAMA_VAULT_MODEL, ENTITY_CANON_DIR,
+    ENTITY_PRIORITY_FOLDERS,
 )
 
 # Regex for [[wiki-links]], handles [[Note]] and [[Note|alias]]
@@ -251,7 +252,7 @@ def extract_batch(n: int = 10, max_minutes: int = 0):
 
     # Collect vault candidates: new notes + modified notes needing re-extraction
     processed_mtimes = progress.get("processed_mtimes", {})
-    candidates_med = []
+    candidates_priority = []
     candidates_other = []
     reprocess = []
     now = time.time()
@@ -274,19 +275,21 @@ def extract_batch(n: int = 10, max_minutes: int = 0):
         full_path = VAULT_PATH / file_path
         mtime = full_path.stat().st_mtime if full_path.exists() else 0
         entry = (note, file_path, mtime, "vault")
-        if meta.get("folder") == "52Medicine":
-            candidates_med.append(entry)
+        if meta.get("folder") in ENTITY_PRIORITY_FOLDERS:
+            candidates_priority.append(entry)
         else:
             candidates_other.append(entry)
     if reprocess:
         print(f"  Re-extracting {len(reprocess)} modified notes")
 
     # Sort by mtime descending (recently modified first)
-    candidates_med.sort(key=lambda x: -x[2])
+    candidates_priority.sort(key=lambda x: -x[2])
     candidates_other.sort(key=lambda x: -x[2])
 
-    # Re-process modified first, then 52Medicine, then others
-    vault_candidates = reprocess + candidates_med + candidates_other
+    # Modified notes first, then the configured priority folders, then the rest.
+    # With no priority folders configured every note lands in `other`, so the
+    # order is simply "recently modified first".
+    vault_candidates = reprocess + candidates_priority + candidates_other
 
     if not vault_candidates:
         print("All notes already processed!")

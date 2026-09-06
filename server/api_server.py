@@ -18,6 +18,7 @@ import asyncio
 import json
 import re
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -41,8 +42,10 @@ from indexer import (
 from graph_builder import load_graph, get_neighbors
 from mcp_server import (
     find_relations_for_notes, handle_tool_call, fetch_textbook_parents,
+    vault_v2_active, _vault_retrieve_v2, get_vault_chunks_table,
     TOOLS as MCP_TOOLS,
 )
+from vault_indexer_v2 import VCHUNKS_TABLE
 from textbook_indexer import (
     TEXTBOOK_EMBEDDING_MODEL, TEXTBOOK_QUERY_PREFIX,
     QUERY_TEMPLATE_VERSION, CHUNKING_VERSION,
@@ -213,6 +216,10 @@ def _truncate_text_to_tokens(text: str, max_tokens: int) -> tuple[str, bool, int
     return (truncated, True, max_tokens)
 
 
+# Module-level app logger. Handlers/level come from uvicorn's config; the
+# endpoints below just need a name they can log against without re-fetching one.
+logger = logging.getLogger("vault-search")
+
 # Retrieval observability log (shared format with mcp_server.py)
 _search_log_path = SEARCH_LOG_PATH
 _search_log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -284,31 +291,44 @@ def search(
     folder: str | None = Query(None),
 ):
     query = _clean(query)
-    client = get_ollama()
-    response = client.embed(model=EMBEDDING_MODEL, input=[QUERY_PREFIX + query])
-    query_embedding = response["embeddings"][0]
-
-    search_builder = get_table().search(query_embedding).metric("cosine").limit(n_results * 3)
-    if folder:
-        search_builder = search_builder.where(f"folder = '{_escape_sql(folder)}'")
-    results_df = search_builder.to_pandas()
+    # v2 (parent-child tables) when the flag file is on, mirroring mcp_server's
+    # dual retrieval; a missing or broken v2 index falls back to v1.
+    raw_rows = None
+    if vault_v2_active():
+        try:
+            raw_rows = _vault_retrieve_v2(
+                query, folder, min(n_results * 10, 150), include_excerpt=False)
+        except Exception as e:
+            logger.warning(f"[search] v2 retrieval failed, falling back to v1: {e}")
+            raw_rows = None
+    if raw_rows is None:
+        client = get_ollama()
+        response = client.embed(model=EMBEDDING_MODEL, input=[QUERY_PREFIX + query])
+        query_embedding = response["embeddings"][0]
+        search_builder = get_table().search(query_embedding).metric("cosine").limit(n_results * 3)
+        if folder:
+            search_builder = search_builder.where(f"folder = '{_escape_sql(folder)}'")
+        results_df = search_builder.to_pandas()
+        raw_rows = []
+        for _, row in results_df.iterrows():
+            raw_rows.append({
+                "file": _clean(str(row.get("file", ""))),
+                "note": _clean(str(row.get("note", ""))),
+                "section": _clean(str(row.get("section", ""))),
+                "folder": _clean(str(row.get("folder", ""))),
+                "tags": _clean(str(row.get("tags", ""))),
+                "similarity": round(max(0, 1 - float(row.get("_distance", 0))), 4),
+                "mtime": float(row["mtime"]) if row.get("mtime") is not None else None,
+            })
 
     formatted = []
     seen = {}
-    for _, row in results_df.iterrows():
-        note = _clean(str(row.get("note", "")))
+    for r in raw_rows:
+        note = r.get("note", "")
         if note in seen:
             continue
         seen[note] = True
-        formatted.append({
-            "file": _clean(str(row.get("file", ""))),
-            "note": note,
-            "section": _clean(str(row.get("section", ""))),
-            "folder": _clean(str(row.get("folder", ""))),
-            "tags": _clean(str(row.get("tags", ""))),
-            "similarity": round(max(0, 1 - float(row.get("_distance", 0))), 4),
-            "mtime": float(row["mtime"]) if row.get("mtime") is not None else None,
-        })
+        formatted.append(r)
 
     # Rerank with path + recency + relation weighting
     graph = _get_graph()
@@ -563,7 +583,9 @@ def similar(
     note_name: str = Query(..., description="Note name without .md"),
     n_results: int = Query(10, ge=1, le=30),
 ):
-    table = get_table()
+    # Whichever index is serving searches: the note's own stored vector is the
+    # query here, so it has to come from the table the neighbours live in.
+    table = (get_vault_chunks_table() if vault_v2_active() else None) or get_table()
     note_rows = table.search().where(f"note = '{_escape_sql(note_name)}'").limit(1).to_pandas()
     if note_rows.empty:
         return JSONResponse(status_code=404, content={"error": f"Note '{note_name}' not found"})
@@ -581,7 +603,8 @@ def similar(
         sem[note] = {
             "file": _clean(str(row.get("file", ""))),
             "note": note,
-            "section": _clean(str(row.get("section", ""))),
+            # v1 stores one heading in `section`; v2 the full path in `section_path`
+            "section": _clean(str(row.get("section", "") or row.get("section_path", ""))),
             "folder": _clean(str(row.get("folder", ""))),
             "mtime": float(row["mtime"]) if row.get("mtime") is not None else None,
             "similarity": round(max(0.0, 1 - float(row.get("_distance", 0))), 4),
@@ -628,7 +651,7 @@ def similar(
 
 
 class ReindexRequest(BaseModel):
-    file: str  # Relative path within vault, e.g. "52Medicine/某筆記.md"
+    file: str  # Relative path within vault, e.g. "Reference/Some note.md"
 
 
 @app.post("/api/reindex")
@@ -652,6 +675,20 @@ def reindex_note(req: ReindexRequest):
     meta, body = parse_frontmatter(content)
     if not body.strip():
         return JSONResponse(status_code=400, content={"error": "Note has no content"})
+
+    # v2 owns its own chunking (parent-child), so rebuilding one note in place
+    # here would write rows the v2 indexer never produced. Hand the file to the
+    # v2 incremental indexer instead — it finds this note by hash. Detached,
+    # because embedding needs the model loaded and that is too slow to block on.
+    if vault_v2_active():
+        script = str(Path(__file__).parent / "vault_indexer_v2.py")
+        kwargs = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+        if hasattr(subprocess, "CREATE_NO_WINDOW"):  # Windows only
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        subprocess.Popen([sys.executable, script, "--incremental"], **kwargs)
+        logger.info(f"[reindex] {note_name}: queued v2 incremental reindex")
+        return {"status": "queued", "note": note_name,
+                "detail": "v2 incremental indexer launched; changes visible shortly"}
 
     tags = meta.get("tags", [])
     if isinstance(tags, str):
@@ -739,9 +776,11 @@ def mcp_call(body: McpCallBody):
 @app.get("/api/health")
 def health():
     try:
-        table = get_table()
+        v2 = vault_v2_active()
+        table = (get_vault_chunks_table() if v2 else None) or get_table()
         count = table.count_rows()
-        return {"status": "ok", "chunks": count, "version": "3.0", "author": "P.W. Chen / drpwchen.com"}
+        return {"status": "ok", "chunks": count, "index": "v2" if v2 else "v1",
+                "version": "3.0", "author": "P.W. Chen / drpwchen.com"}
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
 
@@ -929,11 +968,25 @@ def _search_vault_context(query: str, n: int = 5) -> str:
             vault_ctx = "以下是 vault 中與問題相關的筆記內容���\n\n" + "\n\n---\n\n".join(context_parts)
 
         # --- Textbook search (with exam boost + book-level dedup) ---
+        # The textbook tables are embedded with TEXTBOOK_EMBEDDING_MODEL, so the
+        # query has to be embedded with that model too. Reusing the vault query
+        # vector here was a silent bug: both models emit 1024 dimensions, so
+        # LanceDB accepted it without error and simply returned worse matches.
         textbook_ctx = ""
         tb = get_textbook_table()
         if tb is not None:
+            tb_client = get_ollama()
+            tb_resp = tb_client.embed(
+                model=TEXTBOOK_EMBEDDING_MODEL,
+                input=[TEXTBOOK_QUERY_PREFIX + query],
+                options={"num_ctx": OLLAMA_NUM_CTX},
+            )
+            tb_qe = tb_resp["embeddings"][0]
+            tb_norm = math.sqrt(sum(v * v for v in tb_qe))
+            if tb_norm > 0:
+                tb_qe = [v / tb_norm for v in tb_qe]
             tb_n = max(5, n)  # Match vault result count
-            tb_df = tb.search(query_embedding).metric("cosine").limit(tb_n * 5).to_pandas()
+            tb_df = tb.search(tb_qe).metric("cosine").limit(tb_n * 5).to_pandas()
 
             # Apply exam textbook boost + recency boost
             exam_boost = _load_exam_boost()
@@ -980,7 +1033,7 @@ def _search_vault_context(query: str, n: int = 5) -> str:
 
 def _get_notes_context(note_names: list[str]) -> str:
     """Build context from user-selected note names."""
-    table = get_table()
+    table = (get_vault_chunks_table() if vault_v2_active() else None) or get_table()
     context_parts = []
     for name in note_names:
         rows_df = table.search().where(f"note = '{_escape_sql(name)}'").limit(100).to_pandas()
@@ -989,7 +1042,7 @@ def _get_notes_context(note_names: list[str]) -> str:
         # Combine all chunks of this note
         chunks = []
         for _, row in rows_df.iterrows():
-            section = str(row.get("section", ""))
+            section = str(row.get("section", "") or row.get("section_path", ""))
             text = str(row.get("text", ""))
             chunks.append(f"## {section}\n{text}" if section else text)
         combined = "\n\n".join(chunks)

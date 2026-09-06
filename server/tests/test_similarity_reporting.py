@@ -71,11 +71,11 @@ def test_weights_apply_to_the_cosine_and_to_the_ordering():
     plain vector search, and the fused score that decides the order."""
     import scoring
     saved = dict(scoring.PATH_WEIGHTS)
-    scoring.PATH_WEIGHTS.update({"52Medicine": 1.2, "89Archived": 0.5})
+    scoring.PATH_WEIGHTS.update({"Boosted": 1.2, "Archive": 0.5})
     try:
         results = fused([("buried", 0.80), ("boosted", 0.80)])
-        results[0]["folder"] = "89Archived"
-        results[1]["folder"] = "52Medicine"
+        results[0]["folder"] = "Archive"
+        results[1]["folder"] = "Boosted"
         rerank(results, boost_recent=False, rank_key="fused")
     finally:
         scoring.PATH_WEIGHTS.clear()

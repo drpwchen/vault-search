@@ -35,7 +35,8 @@ from indexer import open_db, TABLE_NAME, EMBEDDING_MODEL, OLLAMA_HOST, QUERY_PRE
 from graph_builder import load_graph, get_neighbors
 from ppr import personalized_pagerank, related_notes
 
-# Textbook v2 constants — separate model from vault (vault stays bge-m3)
+# Textbook v2 constants. The vault v1 index uses its own model (bge-m3);
+# vault v2 uses the qwen3-family model imported further below.
 from textbook_indexer import (
     TEXTBOOK_EMBEDDING_MODEL,
     TEXTBOOK_QUERY_PREFIX,
@@ -49,6 +50,16 @@ from textbook_indexer import (
     CHILD_OVERLAP_TOKENS,
     get_tokenizer,
     tok_len,
+)
+
+# Vault v2 (parent-child chunking) — dual-track retrieval. The flag FILE decides
+# which index vault_search reads; absent flag = legacy v1 (`vault` table).
+# Toggle with `touch $VAULT_SEARCH_DATA_DIR/vault_v2.enabled` — no restart needed.
+from vault_indexer_v2 import (
+    VCHUNKS_TABLE,
+    VPARENTS_TABLE,
+    VAULT_QUERY_TEMPLATE_VERSION,
+    EMBEDDING_MODEL as VAULT_V2_MODEL,
 )
 
 # Lazy-loaded graph
@@ -78,7 +89,10 @@ DEFAULT_MAX_PER_BOOK = 3
 # Cowork exclusion patterns — substrings marking DERIVATIVE notes (drafts, shared
 # co-notes, scratch material) that should be filtered out of search by default.
 # Configure via VAULT_SEARCH_EXCLUDE_PATTERNS. Empty by default.
-from config import COWORK_PATTERNS, SEARCH_LOG_PATH
+from config import (
+    COWORK_PATTERNS, SEARCH_LOG_PATH,
+    VAULT_V2_FLAG, VAULT_QUERY_PREFIX, VAULT_SEARCH_LOG_PATH,
+)
 
 def _is_cowork_path(s: str) -> bool:
     """Check if a book name, folder, or file path matches cowork exclusion patterns."""
@@ -103,6 +117,21 @@ if not _search_logger.handlers:
     _search_logger.addHandler(_h)
     _search_logger.propagate = False
 
+# Vault search observability log — records BOTH the v1 and v2 paths with the
+# index_version that served each query, so a v1/v2 comparison has evidence from
+# the first search rather than only after you decide to look.
+_vault_log_path = VAULT_SEARCH_LOG_PATH
+_vault_log_path.parent.mkdir(parents=True, exist_ok=True)
+_vault_logger = logging.getLogger("vault_search")
+_vault_logger.setLevel(logging.INFO)
+if not _vault_logger.handlers:
+    _vh = logging.handlers.RotatingFileHandler(
+        str(_vault_log_path), maxBytes=50 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
+    _vh.setFormatter(logging.Formatter("%(message)s"))
+    _vault_logger.addHandler(_vh)
+    _vault_logger.propagate = False
+
 
 def find_relations_for_notes(graph_relations: list[dict], note_names: set[str]) -> list[dict]:
     """Find extracted relations where source_note is in the result set.
@@ -124,11 +153,17 @@ def find_relations_for_notes(graph_relations: list[dict], note_names: set[str]) 
     return matched[:15]
 
 
-def find_entities_for_notes(graph_entities: dict, note_names: set[str]) -> list[dict]:
-    """Find extracted entities for result notes.
+def find_entities_for_notes(graph_entities: dict, note_names) -> list[dict]:
+    """Find extracted entities for result notes, in the order given.
 
     Returns compact list: [{note, entities: [{name, type, canonical}]}].
     Limits to 15 entries to avoid output bloat.
+
+    `note_names` must be an ORDERED sequence. Passing a set made the block's
+    order depend on PYTHONHASHSEED, so two servers on the same index answered
+    the same query with the entity list shuffled — and the 15-entry cap then
+    kept a different subset on each. Result rank is the order that means
+    something, so callers pass the results in rank order.
     """
     if not graph_entities:
         return []
@@ -199,6 +234,34 @@ def fetch_textbook_parents(parent_ids) -> dict[str, dict]:
     pulling the vector column here would multiply the transfer for no gain."""
     return fetch_parents_by_id(
         get_textbook_parents_table(), parent_ids, PARENT_CACHE_COLUMNS
+    )
+
+
+# --- Vault v2 tables --------------------------------------------------------
+
+VAULT_PARENT_CACHE_COLUMNS = ["parent_id", "text", "token_count"]
+
+
+def vault_v2_active() -> bool:
+    """True when the v2 index should serve vault searches (flag file present)."""
+    return bool(VAULT_V2_FLAG) and VAULT_V2_FLAG.exists()
+
+
+def get_vault_chunks_table():
+    db = open_db()
+    if VCHUNKS_TABLE not in db.table_names():
+        return None
+    return db.open_table(VCHUNKS_TABLE)
+
+
+def fetch_vault_parents(parent_ids) -> dict[str, dict]:
+    """Read the v2 vault parents a search returns — same on-demand rule as the
+    textbook side above: never hold the whole parent table in memory."""
+    db = open_db()
+    if VPARENTS_TABLE not in db.table_names():
+        return {}
+    return fetch_parents_by_id(
+        db.open_table(VPARENTS_TABLE), parent_ids, VAULT_PARENT_CACHE_COLUMNS
     )
 
 
@@ -273,14 +336,25 @@ def _cosine_for_notes(table, query_embedding, notes: list[str]) -> dict[str, flo
     return best
 
 
+# Characters of chunk text returned as an excerpt. The v2 retrieval path uses
+# the same budget, so vault_search and vault_similar quote a note to the same
+# depth — they used to differ (500 vs 800), which read as vault_similar
+# truncating notes for no stated reason.
+EXCERPT_CHARS = 800
+
+
 def format_results(results_df, include_excerpt: bool = False) -> list[dict]:
-    """Format LanceDB DataFrame results into readable output."""
+    """Format LanceDB DataFrame results into readable output.
+
+    Reads the section from whichever column the table has: v1 stores one heading
+    in `section`, v2 stores the full heading path in `section_path`.
+    """
     formatted = []
     for _, row in results_df.iterrows():
         entry = {
             "file": _clean(str(row.get("file", ""))),
             "note": _clean(str(row.get("note", ""))),
-            "section": _clean(str(row.get("section", ""))),
+            "section": _clean(str(row.get("section", "") or row.get("section_path", ""))),
             "folder": _clean(str(row.get("folder", ""))),
             "tags": _clean(str(row.get("tags", ""))),
             "similarity": round(max(0, 1 - float(row.get("_distance", 0))), 4) if "_distance" in row.index else None,
@@ -288,7 +362,7 @@ def format_results(results_df, include_excerpt: bool = False) -> list[dict]:
         }
         if include_excerpt:
             text = str(row.get("text", ""))
-            entry["excerpt"] = _clean(text[:500]) if text else ""
+            entry["excerpt"] = _clean(text[:EXCERPT_CHARS]) if text else ""
         formatted.append(entry)
     return formatted
 
@@ -425,7 +499,7 @@ TOOLS = [
                 },
                 "include_archived": {
                     "type": "boolean",
-                    "description": "When false (default), 89Archived results are deprioritized. Set true to treat archived notes equally.",
+                    "description": "When false (default), notes in the configured archive folder are deprioritized. Set true to treat archived notes equally.",
                     "default": False
                 },
                 "exclude_cowork": {
@@ -596,7 +670,7 @@ def _textbook_search_v2_raw(arguments: dict) -> list[dict]:
             "similarity": round(max(0.0, 1.0 - float(row.get("_distance", 0))), 4),
         })
 
-    # Cowork exclusion (default true) — filter out 共筆/口試PPT/cowork before dedup
+    # Cowork exclusion (default true) — drop derivative notes before dedup
     if exclude_cowork:
         raw_results = [
             r for r in raw_results
@@ -748,6 +822,218 @@ def _textbook_search_v2_raw(arguments: dict) -> list[dict]:
     return formatted_results
 
 
+class NoVaultIndex(Exception):
+    """Neither index is built — a setup problem, not a search failure."""
+
+
+def _vault_retrieve_v1(query: str, folder: str | None, fetch_n: int,
+                       include_excerpt: bool) -> list[dict]:
+    """Legacy retrieval: the `vault` table, one tier, heading-sized chunks."""
+    db = open_db()
+    if TABLE_NAME not in db.table_names():
+        # A v2-only install with the flag off lands here. Say which index is
+        # missing and how to reach the one that does exist, rather than
+        # surfacing LanceDB's "Table 'vault' was not found".
+        if VCHUNKS_TABLE in db.table_names():
+            raise NoVaultIndex(
+                f"The v1 '{TABLE_NAME}' table does not exist, but the v2 index does. "
+                f"Enable v2 by creating the flag file: {VAULT_V2_FLAG}"
+            )
+        raise NoVaultIndex(
+            "No vault index found. Build one with `python server/indexer.py` (v1) "
+            "or `python server/vault_indexer_v2.py` (v2)."
+        )
+    table = get_table()
+    query_embedding = embed_query(query)
+    search_builder = table.search(query_embedding).metric("cosine").limit(fetch_n)
+    if folder:
+        search_builder = search_builder.where(f"folder = '{_escape_sql(folder)}'")
+    results_df = search_builder.to_pandas()
+    return format_results(results_df, include_excerpt=include_excerpt)
+
+
+def _vault_retrieve_v2(query: str, folder: str | None, fetch_n: int,
+                       include_excerpt: bool) -> list[dict]:
+    """v2 retrieval: vault_chunks_v2, child hit → parent text as the excerpt."""
+    chunks_table = get_vault_chunks_table()
+    if chunks_table is None:
+        raise RuntimeError(f"v2 index enabled but table '{VCHUNKS_TABLE}' is missing")
+
+    client = get_ollama()
+    response = client.embed(
+        model=VAULT_V2_MODEL,
+        input=[VAULT_QUERY_PREFIX + query],
+        options={"num_ctx": OLLAMA_NUM_CTX},
+    )
+    import math
+    qe = response["embeddings"][0]
+    s = math.sqrt(sum(v * v for v in qe))
+    if s > 0:
+        qe = [v / s for v in qe]
+
+    search_builder = chunks_table.search(qe).metric("cosine").limit(fetch_n)
+    if folder:
+        search_builder = search_builder.where(f"folder = '{_escape_sql(folder)}'")
+    df = search_builder.to_pandas()
+
+    formatted = []
+    parent_seen: dict[str, int] = {}
+    pending: list[tuple[dict, str, str]] = []  # (entry, parent_id, child-text fallback)
+    for _, row in df.iterrows():
+        pid = str(row.get("parent_id", ""))
+        # Same cap the textbook side uses: several children of one parent say
+        # the same thing, and each one costs a result slot.
+        if parent_seen.get(pid, 0) >= MAX_CHILDREN_PER_PARENT:
+            continue
+        parent_seen[pid] = parent_seen.get(pid, 0) + 1
+        entry = {
+            "file": _clean(str(row.get("file", ""))),
+            "note": _clean(str(row.get("note", ""))),
+            "section": _clean(str(row.get("section_path", ""))),
+            "folder": _clean(str(row.get("folder", ""))),
+            "tags": _clean(str(row.get("tags", ""))),
+            "similarity": round(max(0, 1 - float(row.get("_distance", 0))), 4),
+            "mtime": float(row["mtime"]) if row.get("mtime") is not None else None,
+        }
+        if include_excerpt:
+            pending.append((entry, pid, str(row.get("text", ""))))
+        formatted.append(entry)
+
+    if pending:
+        parent_rows = fetch_vault_parents([pid for _, pid, _ in pending])
+        for entry, pid, child_text in pending:
+            parent = parent_rows.get(pid)
+            text = str(parent.get("text", "")) if parent else child_text
+            entry["excerpt"] = _clean(text[:EXCERPT_CHARS])
+    return formatted
+
+
+def _vault_search(arguments: dict) -> str:
+    """vault_search: v1/v2 retrieval, then the shared rerank/graph tail + logging."""
+    t0 = time.time()
+    query = _clean(arguments["query"])
+    n = min(arguments.get("n_results", 10), 30)
+    folder = arguments.get("folder")
+    include_excerpt = arguments.get("include_excerpt", False)
+    exclude_cowork = bool(arguments.get("exclude_cowork", True))
+
+    use_v2 = vault_v2_active()
+    fallback_reason = None
+    try:
+        if use_v2:
+            try:
+                # v2 needs more dedup room: child chunks are denser, so a given
+                # number of hits covers fewer distinct notes.
+                formatted = _vault_retrieve_v2(query, folder, min(n * 10, 150), include_excerpt)
+            except Exception as e:
+                # v2 index missing or broken → serve v1 rather than fail the
+                # call. Recorded in the log so a silent downgrade stays visible.
+                use_v2 = False
+                fallback_reason = f"{type(e).__name__}: {e}"
+                formatted = _vault_retrieve_v1(query, folder, min(n * 5, 100), include_excerpt)
+        else:
+            formatted = _vault_retrieve_v1(query, folder, min(n * 5, 100), include_excerpt)
+    except NoVaultIndex as e:
+        return str(e)
+
+    raw_count = len(formatted)
+    raw_unique_notes = len({r["note"] for r in formatted}) / max(1, raw_count)
+
+    # Cowork exclusion (default true) — drop derivative notes
+    if exclude_cowork:
+        formatted = [
+            r for r in formatted
+            if not _is_cowork_path(r.get("file", "") or r.get("note", ""))
+            and not _is_cowork_path(r.get("folder", ""))
+        ]
+
+    # Deduplicate by note name, keeping highest similarity
+    seen_notes = {}
+    deduped = []
+    for r in formatted:
+        note = r["note"]
+        if note not in seen_notes:
+            seen_notes[note] = True
+            deduped.append(r)
+
+    # Rerank with path + recency + relation weighting
+    boost_recent = arguments.get("boost_recent", True)
+    include_archived = arguments.get("include_archived", False)
+    graph = get_graph()
+    graph_relations = graph.get("extracted_relations", [])
+    deduped = rerank(deduped, boost_recent=boost_recent, include_archived=include_archived,
+                     query=query, graph_relations=graph_relations)
+
+    # Trim to requested n after dedup + rerank
+    deduped = deduped[:n]
+
+    # Graph expansion: PPR (personalized PageRank) seeded on the top semantic
+    # hits ranks multi-hop linked notes by graph proximity — replaces the old
+    # naive 1-hop neighbor expansion (sparse-bridge recall@10 ~60% -> ~84%).
+    result_notes = {r["note"] for r in deduped}
+    adjacency = graph.get("adjacency", {})
+    ppr_ranked = personalized_pagerank(
+        adjacency,
+        [r["note"] for r in deduped[:5]],
+        top_k=15,
+        exclude=result_notes,
+    )
+    graph_suggested = [nn for nn, _ in ppr_ranked]
+
+    # Remove internal mtime field from output
+    for r in deduped:
+        r.pop("mtime", None)
+        r.pop("raw_similarity", None)
+
+    # Attach extracted entities + relations for result notes
+    result_note_names = list(dict.fromkeys(r["note"] for r in deduped))
+    entities_data = find_entities_for_notes(
+        graph.get("extracted_entities", {}), result_note_names
+    )
+    relations = find_relations_for_notes(
+        graph_relations, set(result_note_names)
+    )
+
+    # Observability — mirrors the textbook search log's fields
+    sims = [r.get("similarity") for r in deduped if isinstance(r.get("similarity"), (int, float))]
+    top_score = sims[0] if sims else 0.0
+    score_gap = (sims[0] - sims[1]) if len(sims) >= 2 else 0.0
+    if len(sims) >= 2:
+        mean_s = sum(sims) / len(sims)
+        score_std = (sum((x - mean_s) ** 2 for x in sims) / len(sims)) ** 0.5
+    else:
+        score_std = 0.0
+    log_entry = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "query": query,
+        "n_requested": n,
+        "folder_filter": folder,
+        "index_version": "v2" if use_v2 else "v1",
+        "embedding_model": VAULT_V2_MODEL if use_v2 else EMBEDDING_MODEL,
+        "query_template_version": VAULT_QUERY_TEMPLATE_VERSION if use_v2 else "v1-noprefix",
+        "v2_fallback_reason": fallback_reason,
+        "top_score": round(top_score, 4),
+        "score_gap_top1_top2": round(score_gap, 4),
+        "score_std_topN": round(score_std, 4),
+        "raw_note_hit_rate": round(raw_unique_notes, 3),
+        "n_returned": len(deduped),
+        "top_notes": [r.get("note", "") for r in deduped[:5]],
+        "latency_ms": int((time.time() - t0) * 1000),
+    }
+    try:
+        _vault_logger.info(_safe_json_dumps(log_entry))
+    except Exception:
+        pass  # never let logging break search
+
+    return _clean(format_vault_markdown(
+        deduped, query,
+        include_excerpt=include_excerpt,
+        graph_linked=graph_suggested[:10] if graph_suggested else None,
+        entities=entities_data or None,
+        relations=relations or None,
+    ))
+
+
 def handle_tool_call(name: str, arguments: dict) -> str:
     """Execute a tool and return the result as text."""
     try:
@@ -755,96 +1041,23 @@ def handle_tool_call(name: str, arguments: dict) -> str:
         # (CHUNKS_TABLE / PARENTS_TABLE), so an install that indexes only
         # textbooks has no 'vault' table at all — opening it up front made every
         # textbook_search fail with "Table 'vault' was not found".
-        # vault_related is not in this list: it answers from the wiki-link graph
-        # alone and never dereferences `table`, so a textbook-only install can
-        # still use it.
+        # vault_search opens its own table (v1 or v2, see _vault_search), and
+        # vault_related answers from the wiki-link graph alone, so neither is
+        # listed here.
         table = None
-        if name in ("vault_search", "vault_similar"):
-            table = get_table()
+        if name == "vault_similar":
+            table = get_vault_chunks_table() if vault_v2_active() else None
+            if table is None:
+                if TABLE_NAME not in open_db().table_names():
+                    return (
+                        "No vault index found. Build one with "
+                        "`python server/indexer.py` (v1) or "
+                        "`python server/vault_indexer_v2.py` (v2)."
+                    )
+                table = get_table()
 
         if name == "vault_search":
-            query = _clean(arguments["query"])
-            n = min(arguments.get("n_results", 10), 30)
-            folder = arguments.get("folder")
-            include_excerpt = arguments.get("include_excerpt", False)
-            exclude_cowork = bool(arguments.get("exclude_cowork", True))
-
-            query_embedding = embed_query(query)
-
-            search_builder = table.search(query_embedding).metric("cosine")
-
-            # Fetch extra chunks to compensate for dedup losing notes
-            fetch_n = min(n * 5, 100)
-            search_builder = search_builder.limit(fetch_n)
-
-            if folder:
-                search_builder = search_builder.where(f"folder = '{_escape_sql(folder)}'")
-
-            results_df = search_builder.to_pandas()
-            formatted = format_results(results_df, include_excerpt=include_excerpt)
-
-            # Cowork exclusion (default true) — filter out 共筆/口試PPT/cowork notes
-            if exclude_cowork:
-                formatted = [
-                    r for r in formatted
-                    if not _is_cowork_path(r.get("file", "") or r.get("note", ""))
-                    and not _is_cowork_path(r.get("folder", ""))
-                ]
-
-            # Deduplicate by note name, keeping highest similarity
-            seen_notes = {}
-            deduped = []
-            for r in formatted:
-                note = r["note"]
-                if note not in seen_notes:
-                    seen_notes[note] = True
-                    deduped.append(r)
-
-            # Rerank with path + recency + relation weighting
-            boost_recent = arguments.get("boost_recent", True)
-            include_archived = arguments.get("include_archived", False)
-            graph = get_graph()
-            graph_relations = graph.get("extracted_relations", [])
-            deduped = rerank(deduped, boost_recent=boost_recent, include_archived=include_archived,
-                             query=query, graph_relations=graph_relations)
-
-            # Trim to requested n after dedup + rerank
-            deduped = deduped[:n]
-
-            # Graph expansion: PPR (personalized PageRank) seeded on the top semantic
-            # hits ranks multi-hop linked notes by graph proximity — replaces the old
-            # naive 1-hop neighbor expansion (sparse-bridge recall@10 ~60% -> ~84%).
-            result_notes = {r["note"] for r in deduped}
-            adjacency = graph.get("adjacency", {})
-            ppr_ranked = personalized_pagerank(
-                adjacency,
-                [r["note"] for r in deduped[:5]],
-                top_k=15,
-                exclude=result_notes,
-            )
-            graph_suggested = [n for n, _ in ppr_ranked]
-
-            # Remove internal mtime field from output
-            for r in deduped:
-                r.pop("mtime", None)
-                r.pop("raw_similarity", None)
-
-            # Attach extracted entities + relations for result notes
-            result_note_names = {r["note"] for r in deduped}
-            entities_data = find_entities_for_notes(
-                graph.get("extracted_entities", {}), result_note_names
-            )
-            relations = find_relations_for_notes(
-                graph_relations, result_note_names
-            )
-
-            return _clean(format_vault_markdown(
-                deduped, query,
-                include_excerpt=include_excerpt,
-                graph_linked=graph_suggested[:10] if graph_suggested else None,
-                entities=entities_data or None,
-                relations=relations or None,
-            ))
+            return _vault_search(arguments)
 
         elif name == "vault_related":
             note = arguments["note"]
@@ -965,6 +1178,13 @@ def handle_tool_call(name: str, arguments: dict) -> str:
             if PARENTS_TABLE in db.table_names():
                 p_table = db.open_table(PARENTS_TABLE)
                 stats["textbook_parents"] = p_table.count_rows()
+
+            # Vault v2 tables, and which index searches are actually reading.
+            if VCHUNKS_TABLE in db.table_names():
+                stats["vault_chunks_v2"] = db.open_table(VCHUNKS_TABLE).count_rows()
+            if VPARENTS_TABLE in db.table_names():
+                stats["vault_parents_v2"] = db.open_table(VPARENTS_TABLE).count_rows()
+            stats["vault_v2_active"] = vault_v2_active()
 
             return _safe_json_dumps(stats, indent=2)
 
