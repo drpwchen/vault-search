@@ -67,6 +67,14 @@ suit any vault rather than the author's.
   iterating a `set` of note names, and with its 15-entry cap that meant two
   processes on the same index answered one query with a different SUBSET of
   entities. It now follows result rank.
+- **`/api/similar` reported `similarity: 0.0` for some graph-only neighbours.**
+  Their cosine is fetched with one prefiltered vector query, and that query ranks
+  chunks, not notes: with parent-child chunking the row budget ran out before the
+  least similar notes were reached — exactly the ones a wiki-link candidate tends
+  to be. They reported 0.0 and fell under every client threshold, so the Obsidian
+  panel hid rows the endpoint had returned. Whatever the budget cuts is now asked
+  for again. On a 50,700-chunk vault this took a 40-candidate lookup from 36
+  answers to 40.
 
 ### Notes
 
@@ -76,7 +84,7 @@ suit any vault rather than the author's.
   the v2 flag file then deletes the one in `~/.vault-search`. The new
   `server/tests/conftest.py` sets it before any test module is imported, and the
   flag-file tests override the module attribute outright.
-- 53 tests, no network and no lancedb required for most of them.
+- 57 tests, no network and no lancedb required for most of them.
 
 ## [2.8.1] — 2026-09-05 — Related Notes showed nothing: /api/similar reported a fusion rank, not a similarity
 

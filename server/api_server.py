@@ -260,25 +260,41 @@ def _cosine_for_notes(table, query_embedding, notes: list[str]) -> dict[str, flo
     Graph candidates reach /api/similar through the wiki-link graph, not through
     the vector search, so they arrive carrying no similarity at all. A field the
     client is expected to threshold on has to hold a real number for every row,
-    so fetch theirs with one prefiltered vector query.
+    so fetch theirs with a prefiltered vector query.
+
+    The query ranks chunks, not notes, so a flat row budget starves whichever
+    notes sit furthest away - precisely the graph-only ones this exists for, and
+    they then report 0.0 and fall under every client threshold. Whatever the
+    budget cuts is asked for again: each round filters on fewer notes, so the
+    stragglers come back within a couple of passes.
     """
     if not notes:
         return {}
-    quoted = ", ".join("'" + _escape_sql(n) + "'" for n in notes)
-    try:
-        df = (table.search(query_embedding).metric("cosine")
-              .where(f"note IN ({quoted})", prefilter=True)
-              .limit(min(len(notes) * 20, 2000)).to_pandas())
-    except Exception:
-        # Older lancedb without prefilter support: better a missing number than
-        # a broken endpoint. These notes fall back to 0.0 at the call site.
-        return {}
     best: dict[str, float] = {}
-    for _, row in df.iterrows():
-        note = _clean(str(row.get("note", "")))
-        sim = round(max(0.0, 1 - float(row.get("_distance", 0))), 4)
-        if sim > best.get(note, -1.0):
-            best[note] = sim
+    pending = list(notes)
+    for _ in range(3):
+        quoted = ", ".join("'" + _escape_sql(n) + "'" for n in pending)
+        try:
+            df = (table.search(query_embedding).metric("cosine")
+                  .where(f"note IN ({quoted})", prefilter=True)
+                  .limit(max(200, min(len(pending) * 80, 4000))).to_pandas())
+        except Exception:
+            # Older lancedb without prefilter support: better a missing number
+            # than a broken endpoint. These notes fall back to 0.0 at the call
+            # site.
+            return best
+        found = False
+        for _idx, row in df.iterrows():
+            note = _clean(str(row.get("note", "")))
+            sim = round(max(0.0, 1 - float(row.get("_distance", 0))), 4)
+            if sim > best.get(note, -1.0):
+                best[note] = sim
+            found = True
+        pending = [n for n in pending if n not in best]
+        # Nothing pending, or a round that matched nothing at all (those notes
+        # are not in the table): another pass would return the same empty set.
+        if not pending or not found:
+            break
     return best
 
 
